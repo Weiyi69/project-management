@@ -1,7 +1,10 @@
 import { format } from "date-fns";
 import { Plus, Save } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSelector, useDispatch } from "react-redux";
+import { toast } from "react-toastify";
 import AddProjectMember from "./AddProjectMember";
+import { updateWorkspace } from "../features/workspaceSlice";
 
 export default function ProjectSettings({ project }) {
 
@@ -21,6 +24,49 @@ export default function ProjectSettings({ project }) {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
+        if (!project) {
+            toast.error("Project not found");
+            return;
+        }
+
+        setIsSubmitting(true);
+
+        try {
+            const response = await fetch('/api/projects/update', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    projectId: project.id,
+                    ...formData
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update project');
+            }
+
+            const updatedProject = await response.json();
+            
+            // Update Redux store
+            const currentWorkspace = useSelector((state) => state.workspace.currentWorkspace);
+            const updatedWorkspace = {
+                ...currentWorkspace,
+                projects: currentWorkspace.projects.map(p => 
+                    p.id === project.id ? updatedProject : p
+                )
+            };
+            
+            dispatch(updateWorkspace(updatedWorkspace.id));
+            toast.success("Project updated successfully!");
+            
+        } catch (error) {
+            console.error('Error updating project:', error);
+            toast.error("Failed to update project. Please try again.");
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     useEffect(() => {

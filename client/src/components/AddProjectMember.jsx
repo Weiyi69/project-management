@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Mail, UserPlus } from "lucide-react";
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
+import { toast } from "react-toastify";
 import { useSearchParams } from "react-router-dom";
 
 const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
@@ -20,6 +21,55 @@ const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         
+        if (!project) {
+            toast.error("Project not found");
+            return;
+        }
+
+        if (!email) {
+            toast.error("Please select a member to add");
+            return;
+        }
+
+        setIsAdding(true);
+
+        try {
+            const response = await fetch('/api/projects/add-member', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    projectId: project.id,
+                    email: email
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to add member');
+            }
+
+            const updatedProject = await response.json();
+            
+            // Update Redux store
+            const updatedWorkspace = {
+                ...currentWorkspace,
+                projects: currentWorkspace.projects.map(p => 
+                    p.id === project.id ? updatedProject : p
+                )
+            };
+            
+            dispatch({ type: 'workspace/updateWorkspace', payload: updatedWorkspace });
+            setEmail('');
+            setIsDialogOpen(false);
+            toast.success("Member added successfully!");
+            
+        } catch (error) {
+            console.error('Error adding member:', error);
+            toast.error("Failed to add member. Please try again.");
+        } finally {
+            setIsAdding(false);
+        }
     };
 
     if (!isDialogOpen) return null;

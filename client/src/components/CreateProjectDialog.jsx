@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { XIcon } from "lucide-react";
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
+import { addProject } from "../features/workspaceSlice";
+import { toast } from "react-toastify";
 
 const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
 
     const { currentWorkspace } = useSelector((state) => state.workspace);
+    const dispatch = useDispatch();
 
     const [formData, setFormData] = useState({
         name: "",
@@ -23,6 +26,63 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         
+        if (!currentWorkspace) {
+            toast.error("No workspace selected");
+            return;
+        }
+
+        if (!formData.name.trim()) {
+            toast.error("Project name is required");
+            return;
+        }
+
+        setIsSubmitting(true);
+
+        try {
+            const response = await fetch('/api/projects/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    ...formData,
+                    workspaceId: currentWorkspace.id,
+                    team_members: formData.team_members,
+                    team_lead: formData.team_lead || null
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to create project');
+            }
+
+            const newProject = await response.json();
+            
+            // Update Redux store
+            dispatch(addProject(newProject));
+            
+            // Reset form and close dialog
+            setFormData({
+                name: "",
+                description: "",
+                status: "PLANNING",
+                priority: "MEDIUM",
+                start_date: "",
+                end_date: "",
+                team_members: [],
+                team_lead: "",
+                progress: 0,
+            });
+            
+            setIsDialogOpen(false);
+            toast.success("Project created successfully!");
+            
+        } catch (error) {
+            console.error('Error creating project:', error);
+            toast.error("Failed to create project. Please try again.");
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const removeTeamMember = (email) => {
@@ -118,9 +178,9 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
                         >
                             <option value="">Add team members</option>
                             {currentWorkspace?.members
-                                ?.filter((email) => !formData.team_members.includes(email))
+                                ?.filter((member) => !formData.team_members.includes(member.user.email))
                                 .map((member) => (
-                                    <option key={member.user.email} value={member.email}>
+                                    <option key={member.user.email} value={member.user.email}>
                                         {member.user.email}
                                     </option>
                                 ))}
@@ -145,7 +205,7 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
                         <button type="button" onClick={() => setIsDialogOpen(false)} className="px-4 py-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800" >
                             Cancel
                         </button>
-                        <button disabled={isSubmitting || !currentWorkspace} className="px-4 py-2 rounded bg-gradient-to-br from-blue-500 to-blue-600 text-white dark:text-zinc-200" >
+                        <button type="submit" disabled={isSubmitting || !currentWorkspace} className="px-4 py-2 rounded bg-gradient-to-br from-blue-500 to-blue-600 text-white dark:text-zinc-200" >
                             {isSubmitting ? "Creating..." : "Create Project"}
                         </button>
                     </div>
