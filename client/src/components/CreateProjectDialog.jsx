@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { XIcon } from "lucide-react";
+import { X } from "lucide-react";
 import { useSelector, useDispatch } from "react-redux";
 import { addProject } from "../features/workspaceSlice";
 import { toast } from "react-toastify";
@@ -95,7 +95,7 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
         <div className="fixed inset-0 bg-black/20 dark:bg-black/60 backdrop-blur flex items-center justify-center text-left z-50">
             <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 w-full max-w-lg text-zinc-900 dark:text-zinc-200 relative">
                 <button className="absolute top-3 right-3 text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" onClick={() => setIsDialogOpen(false)} >
-                    <XIcon className="size-5" />
+                    <X className="size-5" />
                 </button>
 
                 <h2 className="text-xl font-medium mb-1">Create New Project</h2>
@@ -192,7 +192,7 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
                                     <div key={email} className="flex items-center gap-1 bg-blue-200/50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 px-2 py-1 rounded-md text-sm" >
                                         {email}
                                         <button type="button" onClick={() => removeTeamMember(email)} className="ml-1 hover:bg-blue-300/30 dark:hover:bg-blue-500/30 rounded" >
-                                            <XIcon className="w-3 h-3" />
+                                            <X className="size-3" />
                                         </button>
                                     </div>
                                 ))}

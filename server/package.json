@@ -14,15 +14,16 @@
   "description": "",
   "dependencies": {
     "@clerk/express": "^2.0.4",
+    "@neondatabase/serverless": "1.0.2",
     "@prisma/adapter-neon": "^7.5.0",
     "@prisma/client": "^7.5.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "inngest": "^3.52.6"
+    "inngest": "^3.52.7"
   },
   "devDependencies": {
     "nodemon": "^3.1.14",
-    "prisma": "^7.5.0"
+    "prisma": "^6.19.2"
   }
 }

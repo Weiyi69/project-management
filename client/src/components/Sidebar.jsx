@@ -12,6 +12,7 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
     const menuItems = [
         { name: 'Dashboard', href: '/', icon: LayoutDashboardIcon },
         { name: 'Projects', href: '/projects', icon: FolderOpenIcon },
+        { name: 'Team Management', href: '/team-management', icon: UsersIcon },
         { name: 'Team', href: '/team', icon: UsersIcon },
     ]
 
@@ -56,7 +57,7 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen }) => {
                             className='flex w-full items-center gap-3 py-2 px-4 text-gray-800 dark:text-zinc-100 cursor-pointer rounded hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-all'
                         >
                             <SettingsIcon size={16} />
-                            <p className='text-sm truncate'>User Management</p>
+                            <p className='text-sm truncate'>Account Settings</p>
                         </button>
                     </div>
                     <MyTasksSidebar />

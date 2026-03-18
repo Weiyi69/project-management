@@ -7,6 +7,7 @@ import Team from "./pages/Team";
 import ProjectDetails from "./pages/ProjectDetails";
 import TaskDetails from "./pages/TaskDetails";
 import AccountSettings from "./components/AccountSettings";
+import TeamManagement from "./components/TeamManagement";
 
 const App = () => {
     return (
@@ -16,6 +17,7 @@ const App = () => {
                 <Route path="/" element={<Layout />}>
                     <Route index element={<Dashboard />} />
                     <Route path="team" element={<Team />} />
+                    <Route path="team-management" element={<TeamManagement />} />
                     <Route path="projects" element={<Projects />} />
                     <Route path="projectsDetail" element={<ProjectDetails />} />
                     <Route path="taskDetails" element={<TaskDetails />} />

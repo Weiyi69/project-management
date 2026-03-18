@@ -172,7 +172,7 @@ const ProjectAnalytics = ({ project, tasks }) => {
                         </div>
                     ))}
                 </div>
-            </div>
+            </div>  
         </div>
     );
 };
