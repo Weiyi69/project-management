@@ -3,6 +3,7 @@ import { Mail, UserPlus } from "lucide-react";
 import { useSelector, useDispatch } from "react-redux";
 import { toast } from "react-toastify";
 import { useSearchParams } from "react-router-dom";
+import { apiFetch } from "../lib/api";
 
 const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
 
@@ -34,7 +35,7 @@ const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
         setIsAdding(true);
 
         try {
-            const response = await fetch('/api/projects/add-member', {
+            const response = await apiFetch('/api/projects/add-member', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

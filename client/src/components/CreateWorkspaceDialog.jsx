@@ -1,12 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { XIcon, Plus, UserPlus, Users, Upload, Edit } from "lucide-react";
 import { useSelector, useDispatch } from "react-redux";
 import { addWorkspace, updateWorkspace } from "../features/workspaceSlice";
 import { toast } from "react-toastify";
+import { useUser } from "@clerk/clerk-react";
+import { apiFetch } from "../lib/api";
 
 const CreateWorkspaceDialog = ({ isDialogOpen, setIsDialogOpen, workspaceToEdit = null }) => {
     const dispatch = useDispatch();
     const { workspaces } = useSelector((state) => state.workspace);
+    const { user } = useUser();
 
     const [formData, setFormData] = useState({
         name: workspaceToEdit?.name || "",
@@ -21,6 +24,20 @@ const CreateWorkspaceDialog = ({ isDialogOpen, setIsDialogOpen, workspaceToEdit 
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [currentStep, setCurrentStep] = useState(1); // 1: Basic Info, 2: Members, 3: Project
+
+    useEffect(() => {
+        setFormData({
+            name: workspaceToEdit?.name || "",
+            description: workspaceToEdit?.description || "",
+            visibility: workspaceToEdit?.visibility || "PRIVATE",
+            members: workspaceToEdit?.members || [],
+            createProject: false,
+            projectName: "",
+            image: null,
+            imagePreview: workspaceToEdit?.image_url || null
+        });
+        setCurrentStep(1);
+    }, [workspaceToEdit, isDialogOpen]);
 
     const handleInputChange = (field, value) => {
         setFormData(prev => ({ ...prev, [field]: value }));
@@ -83,116 +100,91 @@ const CreateWorkspaceDialog = ({ isDialogOpen, setIsDialogOpen, workspaceToEdit 
 
         try {
             if (workspaceToEdit) {
-                // Update existing workspace
-                const updatedWorkspace = {
-                    ...workspaceToEdit,
-                    name: formData.name,
-                    description: formData.description || null,
-                    image_url: formData.imagePreview || workspaceToEdit.image_url,
-                    updatedAt: new Date().toISOString(),
-                    members: [
-                        ...workspaceToEdit.members.filter(m => m.role === 'ADMIN'), // Keep existing admins
-                        ...formData.members.map((member, index) => ({
-                            id: `member_${Date.now()}_${index}`,
-                            userId: `user_${index + 4}`, // Generate user IDs for demo
-                            workspaceId: workspaceToEdit.id,
-                            message: "",
-                            role: member.role,
-                            user: {
-                                id: `user_${index + 4}`,
-                                name: member.email.split('@')[0],
-                                email: member.email,
-                                image: "/profile_img_default.svg"
-                            }
-                        }))
-                    ]
-                };
+                const response = await apiFetch("/api/workspaces/update", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        workspaceId: workspaceToEdit.id,
+                        name: formData.name,
+                        description: formData.description,
+                        image_url: formData.imagePreview || workspaceToEdit.image_url,
+                    }),
+                });
 
-                dispatch(updateWorkspace(updatedWorkspace));
+                const updatedWorkspace = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(updatedWorkspace.error || "Failed to update workspace");
+                }
+
+                dispatch(updateWorkspace({
+                    name: formData.name,
+                    ...updatedWorkspace,
+                }));
                 toast.success("Workspace updated successfully!");
             } else {
-                // Create new workspace
-                const slug = formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-                const newId = `org_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const response = await apiFetch("/api/workspaces/create", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        name: formData.name,
+                        description: formData.description,
+                        image_url: formData.imagePreview || "",
+                        actor: user ? {
+                            name: user.fullName || user.username || user.primaryEmailAddress?.emailAddress,
+                            email: user.primaryEmailAddress?.emailAddress,
+                            image: user.imageUrl || "",
+                        } : null,
+                    }),
+                });
 
-                const newWorkspace = {
-                    id: newId,
-                    name: formData.name,
-                    slug: slug,
-                    description: formData.description || null,
-                    settings: {},
-                    ownerId: "user_1",
-                    createdAt: new Date().toISOString(),
-                    image_url: formData.imagePreview || "/workspace_img_default.png",
-                    updatedAt: new Date().toISOString(),
-                    members: [
-                        {
-                            id: `member_${Date.now()}`,
-                            userId: "user_1",
-                            workspaceId: newId,
-                            message: "",
-                            role: "ADMIN",
-                            user: {
-                                id: "user_1",
-                                name: "Alex Smith",
-                                email: "alexsmith@example.com",
-                                image: "/profile_img_a.svg"
-                            }
+                const newWorkspace = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(newWorkspace.error || "Failed to create workspace");
+                }
+
+                if (formData.createProject && formData.projectName && user?.id) {
+                    const projectResponse = await apiFetch("/api/projects/create", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
                         },
-                        ...formData.members.map((member, index) => ({
-                            id: `member_${Date.now()}_${index}`,
-                            userId: `user_${index + 4}`,
-                            workspaceId: newId,
-                            message: "",
-                            role: member.role,
-                            user: {
-                                id: `user_${index + 4}`,
-                                name: member.email.split('@')[0],
-                                email: member.email,
-                                image: "/profile_img_default.svg"
-                            }
-                        }))
-                    ],
-                    projects: formData.createProject && formData.projectName ? [
-                        {
-                            id: `project_${Date.now()}`,
+                        body: JSON.stringify({
                             name: formData.projectName,
                             description: "First project in this workspace",
-                            priority: "MEDIUM",
                             status: "PLANNING",
+                            priority: "MEDIUM",
                             start_date: new Date().toISOString(),
-                            end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-                            team_lead: "user_1",
-                            workspaceId: newId,
-                            progress: 0,
-                            createdAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString(),
-                            tasks: [],
-                            members: [
-                                {
-                                    id: `project_member_${Date.now()}`,
-                                    userId: "user_1",
-                                    projectId: `project_${Date.now()}`,
-                                    user: {
-                                        id: "user_1",
-                                        name: "Alex Smith",
-                                        email: "alexsmith@example.com",
-                                        image: "/profile_img_a.svg"
-                                    }
-                                }
-                            ]
-                        }
-                    ] : [],
-                    owner: {
-                        id: "user_1",
-                        name: "Alex Smith",
-                        email: "alexsmith@example.com",
-                        image: "/profile_img_a.svg"
+                            team_lead: user.id,
+                            workspaceId: newWorkspace.id,
+                            actor: {
+                                name: user.fullName || user.username || user.primaryEmailAddress?.emailAddress,
+                                email: user.primaryEmailAddress?.emailAddress,
+                                image: user.imageUrl || "",
+                            },
+                        }),
+                    });
+
+                    const createdProject = await projectResponse.json();
+
+                    if (!projectResponse.ok) {
+                        throw new Error(createdProject.error || "Workspace was created, but the first project could not be created");
                     }
-                };
+
+                    newWorkspace.projects = [createdProject];
+                }
 
                 dispatch(addWorkspace(newWorkspace));
                 toast.success("Workspace created successfully!");
+            }
+
+            if (formData.members.length > 0) {
+                toast.info("Workspace member invitations are not wired to the backend yet.");
             }
             
             // Reset form and close dialog
@@ -212,7 +204,7 @@ const CreateWorkspaceDialog = ({ isDialogOpen, setIsDialogOpen, workspaceToEdit 
             
         } catch (error) {
             console.error('Error processing workspace:', error);
-            toast.error("Failed to process workspace. Please try again.");
+            toast.error(error.message || "Failed to process workspace. Please try again.");
         } finally {
             setIsSubmitting(false);
         }

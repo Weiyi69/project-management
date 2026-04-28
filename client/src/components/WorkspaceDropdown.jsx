@@ -3,8 +3,9 @@ import { ChevronDown, Check, Plus, Trash2, Edit } from "lucide-react";
 import { useDispatch, useSelector } from "react-redux";
 import { setCurrentWorkspace, deleteWorkspace } from "../features/workspaceSlice";
 import { useNavigate } from "react-router-dom";
-import { dummyWorkspaces } from "../assets/assets";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog";
+import { toast } from "react-toastify";
+import { apiFetch } from "../lib/api";
 
 function WorkspaceDropdown() {
 
@@ -27,6 +28,31 @@ function WorkspaceDropdown() {
     const handleEditWorkspace = (workspace) => {
         setWorkspaceToEdit(workspace);
         setIsCreateWorkspaceOpen(true);
+    }
+
+    const handleDeleteWorkspace = async (workspaceId) => {
+        try {
+            const response = await apiFetch("/api/workspaces/delete", {
+                method: "DELETE",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    workspaceId,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || "Failed to delete workspace");
+            }
+
+            dispatch(deleteWorkspace(workspaceId));
+            toast.success("Workspace deleted successfully!");
+        } catch (error) {
+            toast.error(error.message || "Failed to delete workspace");
+        }
     }
 
     // Close dropdown on outside click
@@ -99,7 +125,7 @@ function WorkspaceDropdown() {
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         if (window.confirm('Are you sure you want to delete this workspace?')) {
-                                            dispatch(deleteWorkspace(ws.id));
+                                            handleDeleteWorkspace(ws.id);
                                         }
                                     }}
                                     className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"

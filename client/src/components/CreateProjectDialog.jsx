@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { useSelector, useDispatch } from "react-redux";
 import { addProject } from "../features/workspaceSlice";
 import { toast } from "react-toastify";
+import { apiFetch } from "../lib/api";
 
 const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
 
@@ -39,7 +40,7 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch('/api/projects/create', {
+            const response = await apiFetch('/api/projects/create', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

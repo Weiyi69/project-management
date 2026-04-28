@@ -1,6 +1,7 @@
 import 'dotenv/config';
+import { PrismaNeon } from '@prisma/adapter-neon';
 import { PrismaClient } from '@prisma/client';
-import { neonConfig } from '@neondatabase/serverless';
+import { neonConfig, Pool } from '@neondatabase/serverless';
 
 import ws from 'ws';
 neonConfig.webSocketConstructor = ws;
@@ -13,15 +14,11 @@ neonConfig.webSocketConstructor = ws;
 // var prisma: PrismaClient | undefined
 // }
 
-const connectionString = process.env.DIRECT_URL;
+const connectionString = process.env.DATABASE_URL;
+const pool = new Pool({ connectionString });
+const adapter = new PrismaNeon(pool);
 
-const prisma = global.prisma || new PrismaClient({
-  datasources: {
-    db: {
-      url: connectionString
-    }
-  }
-});
+const prisma = global.prisma || new PrismaClient({ adapter });
 
 if (process.env.NODE_ENV === 'development') global.prisma = prisma;
 

@@ -1,16 +1,51 @@
-import { createSlice } from "@reduxjs/toolkit";
+import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import { dummyWorkspaces } from "../assets/assets";
+import { apiFetch } from "../lib/api";
 
 // Load workspaces from localStorage or use dummy data as fallback
-const savedWorkspaces = localStorage.getItem('workspaces');
-const savedCurrentWorkspaceId = localStorage.getItem('currentWorkspaceId');
+const savedWorkspaces = localStorage.getItem("workspaces");
+const savedCurrentWorkspaceId = localStorage.getItem("currentWorkspaceId");
+const parsedSavedWorkspaces = savedWorkspaces ? JSON.parse(savedWorkspaces) : null;
+const initialWorkspaces = parsedSavedWorkspaces || dummyWorkspaces || [];
+const initialCurrentWorkspace =
+    initialWorkspaces.find((workspace) => workspace.id === savedCurrentWorkspaceId) ||
+    initialWorkspaces[0] ||
+    null;
+
+const persistWorkspaceState = (workspaces, currentWorkspace) => {
+    localStorage.setItem("workspaces", JSON.stringify(workspaces));
+
+    if (currentWorkspace?.id) {
+        localStorage.setItem("currentWorkspaceId", currentWorkspace.id);
+        return;
+    }
+
+    localStorage.removeItem("currentWorkspaceId");
+};
+
+export const fetchWorkspaces = createAsyncThunk(
+    "workspace/fetchWorkspaces",
+    async (_, { rejectWithValue }) => {
+        try {
+            const response = await apiFetch("/api/workspaces");
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                return rejectWithValue(data.error || "Failed to fetch workspaces");
+            }
+
+            return response.json();
+        } catch (error) {
+            return rejectWithValue(error.message || "Failed to fetch workspaces");
+        }
+    }
+);
 
 const initialState = {
-    workspaces: savedWorkspaces ? JSON.parse(savedWorkspaces) : dummyWorkspaces || [],
-    currentWorkspace: savedCurrentWorkspaceId 
-        ? (savedWorkspaces ? JSON.parse(savedWorkspaces).find(w => w.id === savedCurrentWorkspaceId) : dummyWorkspaces[1])
-        : dummyWorkspaces[1],
+    workspaces: initialWorkspaces,
+    currentWorkspace: initialCurrentWorkspace,
     loading: false,
+    error: null,
 };
 
 const workspaceSlice = createSlice({
@@ -19,8 +54,12 @@ const workspaceSlice = createSlice({
     reducers: {
         setWorkspaces: (state, action) => {
             state.workspaces = action.payload;
-            // Save to localStorage
-            localStorage.setItem('workspaces', JSON.stringify(action.payload));
+            state.currentWorkspace =
+                state.workspaces.find((w) => w.id === state.currentWorkspace?.id) ||
+                state.workspaces[0] ||
+                null;
+            state.error = null;
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         },
         setCurrentWorkspace: (state, action) => {
             localStorage.setItem("currentWorkspaceId", action.payload);
@@ -36,25 +75,29 @@ const workspaceSlice = createSlice({
             if (state.currentWorkspace?.id !== action.payload.id) {
                 state.currentWorkspace = action.payload;
             }
+
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         },
         updateWorkspace: (state, action) => {
             state.workspaces = state.workspaces.map((w) =>
                 w.id === action.payload.id ? action.payload : w
             );
 
-            // Save to localStorage
-            localStorage.setItem('workspaces', JSON.stringify(state.workspaces));
-
             // if current workspace is updated, set it to the updated workspace
             if (state.currentWorkspace?.id === action.payload.id) {
                 state.currentWorkspace = action.payload;
             }
+
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         },
         deleteWorkspace: (state, action) => {
             state.workspaces = state.workspaces.filter((w) => w.id !== action.payload);
-            
-            // Save to localStorage
-            localStorage.setItem('workspaces', JSON.stringify(state.workspaces));
+
+            if (state.currentWorkspace?.id === action.payload) {
+                state.currentWorkspace = state.workspaces[0] || null;
+            }
+
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         },
         addProject: (state, action) => {
             state.currentWorkspace.projects.push(action.payload);
@@ -63,8 +106,7 @@ const workspaceSlice = createSlice({
                 w.id === state.currentWorkspace.id ? { ...w, projects: w.projects.concat(action.payload) } : w
             );
             
-            // Save to localStorage
-            localStorage.setItem('workspaces', JSON.stringify(state.workspaces));
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         },
         addTask: (state, action) => {
 
@@ -85,8 +127,7 @@ const workspaceSlice = createSlice({
                 } : w
             );
             
-            // Save to localStorage
-            localStorage.setItem('workspaces', JSON.stringify(state.workspaces));
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         },
         updateTask: (state, action) => {
             state.currentWorkspace.projects.map((p) => {
@@ -109,8 +150,7 @@ const workspaceSlice = createSlice({
                 } : w
             );
             
-            // Save to localStorage
-            localStorage.setItem('workspaces', JSON.stringify(state.workspaces));
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         },
         deleteTask: (state, action) => {
             state.currentWorkspace.projects.map((p) => {
@@ -128,11 +168,31 @@ const workspaceSlice = createSlice({
                 } : w
             );
             
-            // Save to localStorage
-            localStorage.setItem('workspaces', JSON.stringify(state.workspaces));
+            persistWorkspaceState(state.workspaces, state.currentWorkspace);
         }
 
-    }
+    },
+    extraReducers: (builder) => {
+        builder
+            .addCase(fetchWorkspaces.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchWorkspaces.fulfilled, (state, action) => {
+                state.loading = false;
+                state.workspaces = action.payload;
+                state.currentWorkspace =
+                    action.payload.find((workspace) => workspace.id === state.currentWorkspace?.id) ||
+                    action.payload.find((workspace) => workspace.id === savedCurrentWorkspaceId) ||
+                    action.payload[0] ||
+                    null;
+                persistWorkspaceState(state.workspaces, state.currentWorkspace);
+            })
+            .addCase(fetchWorkspaces.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload || "Failed to fetch workspaces";
+            });
+    },
 });
 
 export const { setWorkspaces, setCurrentWorkspace, addWorkspace, updateWorkspace, deleteWorkspace, addProject, addTask, updateTask, deleteTask } = workspaceSlice.actions;

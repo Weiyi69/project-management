@@ -6,6 +6,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { loadTheme } from '../features/themeSlice'
 import { Loader2Icon } from 'lucide-react'
 import {useUser, SignIn} from '@clerk/clerk-react'
+import { fetchWorkspaces } from '../features/workspaceSlice'
 
 const Layout = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -16,7 +17,23 @@ const Layout = () => {
     // Initial load of theme
     useEffect(() => {
         dispatch(loadTheme())
-    }, [])
+    }, [dispatch])
+
+    useEffect(() => {
+        if (!isLoaded || !user) {
+            return
+        }
+
+        dispatch(fetchWorkspaces())
+    }, [dispatch, isLoaded, user])
+
+    if (!isLoaded) {
+        return (
+            <div className='flex items-center justify-center h-screen bg-white dark:bg-zinc-950'>
+                <Loader2Icon className='w-6 h-6 animate-spin text-zinc-500' />
+            </div>
+        )
+    }
 
     if(!user){
         return (
@@ -27,8 +44,8 @@ const Layout = () => {
     }
 
     if (loading) return (
-        <div className='flex items-center justify-center items-center h-screen bg-white dark:bg-zinc-950'>
-            <SignIn />
+        <div className='flex items-center justify-center h-screen bg-white dark:bg-zinc-950'>
+            <Loader2Icon className='w-6 h-6 animate-spin text-zinc-500' />
         </div>
     )
 

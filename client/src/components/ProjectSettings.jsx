@@ -5,8 +5,11 @@ import { useSelector, useDispatch } from "react-redux";
 import { toast } from "react-toastify";
 import AddProjectMember from "./AddProjectMember";
 import { updateWorkspace } from "../features/workspaceSlice";
+import { apiFetch } from "../lib/api";
 
 export default function ProjectSettings({ project }) {
+    const dispatch = useDispatch();
+    const currentWorkspace = useSelector((state) => state.workspace.currentWorkspace);
 
     const [formData, setFormData] = useState({
         name: "New Website Launch",
@@ -32,7 +35,7 @@ export default function ProjectSettings({ project }) {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch('/api/projects/update', {
+            const response = await apiFetch('/api/projects/update', {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -50,7 +53,6 @@ export default function ProjectSettings({ project }) {
             const updatedProject = await response.json();
             
             // Update Redux store
-            const currentWorkspace = useSelector((state) => state.workspace.currentWorkspace);
             const updatedWorkspace = {
                 ...currentWorkspace,
                 projects: currentWorkspace.projects.map(p => 
@@ -58,7 +60,7 @@ export default function ProjectSettings({ project }) {
                 )
             };
             
-            dispatch(updateWorkspace(updatedWorkspace.id));
+            dispatch(updateWorkspace(updatedWorkspace));
             toast.success("Project updated successfully!");
             
         } catch (error) {
