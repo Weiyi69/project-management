@@ -12,11 +12,10 @@ const app = express();
 
 app.use(express.json());
 app.use(cors());
-app.use(clerkMiddleware());
 
 app.use("/", healthRoutes);
-app.use("/api/workspaces", workspaceRoutes);
-app.use("/api/projects", projectRoutes);
+app.use("/api/workspaces", clerkMiddleware(), workspaceRoutes);
+app.use("/api/projects", clerkMiddleware(), projectRoutes);
 app.use("/api/inngest", inngestRoutes);
 
 app.use(notFoundHandler);
