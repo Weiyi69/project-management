@@ -91,14 +91,14 @@ model Project {
     status      ProjectStatus   @default(ACTIVE)
     start_date  DateTime?
     end_date    DateTime?
-    team_lead   String
+    team_lead   String?
     workspaceId String
     progress    Int             @default(0)
     createdAt   DateTime        @default(now())
     updatedAt   DateTime        @updatedAt
     members     ProjectMember[]
 
-    owner     User      @relation("ProjectOwner", fields: [team_lead], references: [id], onDelete: Cascade)
+    owner     User?     @relation("ProjectOwner", fields: [team_lead], references: [id], onDelete: Cascade)
     workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
     tasks     Task[]
 }

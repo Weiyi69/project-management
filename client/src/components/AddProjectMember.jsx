@@ -8,15 +8,16 @@ import { apiFetch } from "../lib/api";
 const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
 
     const [searchParams] = useSearchParams();
+    const dispatch = useDispatch();
 
     const id = searchParams.get('id');
 
     const currentWorkspace = useSelector((state) => state.workspace?.currentWorkspace || null);
 
     const project = currentWorkspace?.projects.find((p) => p.id === id);
-    const projectMembersEmails = project?.members.map((member) => member.user.email);
+    const projectMembersEmails = project?.members.map((member) => member.user.email) || [];
 
-    const [email, setEmail] = useState('');
+    const [userId, setUserId] = useState('');
     const [isAdding, setIsAdding] = useState(false);
 
     const handleSubmit = async (e) => {
@@ -27,7 +28,7 @@ const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
             return;
         }
 
-        if (!email) {
+        if (!userId) {
             toast.error("Please select a member to add");
             return;
         }
@@ -42,7 +43,7 @@ const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
                 },
                 body: JSON.stringify({
                     projectId: project.id,
-                    email: email
+                    userId
                 })
             });
 
@@ -61,7 +62,7 @@ const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
             };
             
             dispatch({ type: 'workspace/updateWorkspace', payload: updatedWorkspace });
-            setEmail('');
+            setUserId('');
             setIsDialogOpen(false);
             toast.success("Member added successfully!");
             
@@ -100,12 +101,12 @@ const AddProjectMember = ({ isDialogOpen, setIsDialogOpen }) => {
                         <div className="relative">
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 dark:text-zinc-400 w-4 h-4" />
                             {/* List All non project members from current workspace */}
-                            <select value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10 mt-1 w-full rounded border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-200 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 py-2 focus:outline-none focus:border-blue-500" required >
+                            <select value={userId} onChange={(e) => setUserId(e.target.value)} className="pl-10 mt-1 w-full rounded border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-200 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 py-2 focus:outline-none focus:border-blue-500" required >
                                 <option value="">Select a member</option>
                                 {currentWorkspace?.members
                                     .filter((member) => !projectMembersEmails.includes(member.user.email))
                                     .map((member) => (
-                                        <option key={member.user.id} value={member.user.email}> {member.user.email} </option>
+                                        <option key={member.user.id} value={member.user.id}> {member.user.email} </option>
                                     ))}
                             </select>
                         </div>

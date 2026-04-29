@@ -86,8 +86,8 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
         }
     };
 
-    const removeTeamMember = (email) => {
-        setFormData((prev) => ({ ...prev, team_members: prev.team_members.filter(m => m !== email) }));
+    const removeTeamMember = (userId) => {
+        setFormData((prev) => ({ ...prev, team_members: prev.team_members.filter((memberId) => memberId !== userId) }));
     };
 
     if (!isDialogOpen) return null;
@@ -157,10 +157,10 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
                     {/* Lead */}
                     <div>
                         <label className="block text-sm mb-1">Project Lead</label>
-                        <select value={formData.team_lead} onChange={(e) => setFormData({ ...formData, team_lead: e.target.value, team_members: e.target.value ? [...new Set([...formData.team_members, e.target.value])] : formData.team_members, })} className="w-full px-3 py-2 rounded dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 mt-1 text-zinc-900 dark:text-zinc-200 text-sm" >
+                            <select value={formData.team_lead} onChange={(e) => setFormData({ ...formData, team_lead: e.target.value, team_members: e.target.value ? [...new Set([...formData.team_members, e.target.value])] : formData.team_members, })} className="w-full px-3 py-2 rounded dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 mt-1 text-zinc-900 dark:text-zinc-200 text-sm" >
                             <option value="">No lead</option>
                             {currentWorkspace?.members?.map((member) => (
-                                <option key={member.user.email} value={member.user.email}>
+                                <option key={member.user.id} value={member.user.id}>
                                     {member.user.email}
                                 </option>
                             ))}
@@ -179,9 +179,9 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
                         >
                             <option value="">Add team members</option>
                             {currentWorkspace?.members
-                                ?.filter((member) => !formData.team_members.includes(member.user.email))
+                                ?.filter((member) => !formData.team_members.includes(member.user.id))
                                 .map((member) => (
-                                    <option key={member.user.email} value={member.user.email}>
+                                    <option key={member.user.id} value={member.user.id}>
                                         {member.user.email}
                                     </option>
                                 ))}
@@ -189,14 +189,18 @@ const CreateProjectDialog = ({ isDialogOpen, setIsDialogOpen }) => {
 
                         {formData.team_members.length > 0 && (
                             <div className="flex flex-wrap gap-2 mt-2">
-                                {formData.team_members.map((email) => (
-                                    <div key={email} className="flex items-center gap-1 bg-blue-200/50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 px-2 py-1 rounded-md text-sm" >
-                                        {email}
-                                        <button type="button" onClick={() => removeTeamMember(email)} className="ml-1 hover:bg-blue-300/30 dark:hover:bg-blue-500/30 rounded" >
+                                {formData.team_members.map((userId) => {
+                                    const member = currentWorkspace?.members?.find((workspaceMember) => workspaceMember.user.id === userId);
+
+                                    return (
+                                    <div key={userId} className="flex items-center gap-1 bg-blue-200/50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 px-2 py-1 rounded-md text-sm" >
+                                        {member?.user.email || userId}
+                                        <button type="button" onClick={() => removeTeamMember(userId)} className="ml-1 hover:bg-blue-300/30 dark:hover:bg-blue-500/30 rounded" >
                                             <X className="size-3" />
                                         </button>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

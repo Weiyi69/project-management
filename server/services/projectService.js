@@ -14,6 +14,39 @@ const badRequest = (message) => {
   return error;
 };
 
+const resolveUserId = async (identifier, fieldName = "User") => {
+  if (!identifier) {
+    throw badRequest(`${fieldName} is required`);
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { id: identifier },
+        { email: identifier },
+      ],
+    },
+  });
+
+  if (!user) {
+    throw badRequest(`${fieldName} not found`);
+  }
+
+  return user.id;
+};
+
+const resolveUserIds = async (identifiers = []) => {
+  if (!identifiers.length) {
+    return [];
+  }
+
+  const resolvedIds = await Promise.all(
+    identifiers.map((identifier) => resolveUserId(identifier, "Project member")),
+  );
+
+  return [...new Set(resolvedIds)];
+};
+
 const ensureUserExists = async (userId, actor) => {
   if (!userId) {
     throw badRequest("Team lead is required");
@@ -57,7 +90,26 @@ export const createProject = async ({
     throw badRequest("Project name and workspace ID are required");
   }
 
-  await ensureUserExists(team_lead, actor);
+  let teamLeadId = null;
+  if (team_lead) {
+    const existingLead = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: team_lead },
+          { email: team_lead },
+        ],
+      },
+    });
+
+    if (existingLead) {
+      teamLeadId = existingLead.id;
+    } else {
+      await ensureUserExists(team_lead, actor);
+      teamLeadId = team_lead;
+    }
+  }
+
+  const teamMemberIds = await resolveUserIds(team_members ?? []);
 
   const project = await prisma.project.create({
     data: {
@@ -67,15 +119,15 @@ export const createProject = async ({
       priority,
       start_date: start_date ? new Date(start_date) : null,
       end_date: end_date ? new Date(end_date) : null,
-      team_lead,
+      team_lead: teamLeadId,
       workspaceId,
       progress: 0,
     },
   });
 
-  if (team_members?.length) {
+  if (teamMemberIds.length) {
     await prisma.projectMember.createMany({
-      data: team_members.map((userId) => ({
+      data: teamMemberIds.map((userId) => ({
         projectId: project.id,
         userId,
       })),
@@ -83,12 +135,12 @@ export const createProject = async ({
     });
   }
 
-  if (team_lead) {
+  if (teamLeadId) {
     await prisma.projectMember.createMany({
       data: [
         {
           projectId: project.id,
-          userId: team_lead,
+          userId: teamLeadId,
         },
       ],
       skipDuplicates: true,
@@ -130,15 +182,17 @@ export const updateProject = async ({
   });
 };
 
-export const addProjectMember = async ({ projectId, email }) => {
-  if (!projectId || !email) {
-    throw badRequest("Project ID and email are required");
+export const addProjectMember = async ({ projectId, userId, email }) => {
+  if (!projectId || (!userId && !email)) {
+    throw badRequest("Project ID and user identifier are required");
   }
+
+  const resolvedUserId = await resolveUserId(userId || email, "Project member");
 
   const existingMember = await prisma.projectMember.findFirst({
     where: {
       projectId,
-      userId: email,
+      userId: resolvedUserId,
     },
   });
 
@@ -149,7 +203,7 @@ export const addProjectMember = async ({ projectId, email }) => {
   await prisma.projectMember.create({
     data: {
       projectId,
-      userId: email,
+      userId: resolvedUserId,
     },
   });
 
