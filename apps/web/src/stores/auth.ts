@@ -85,9 +85,16 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
+  function expireSession(): void {
+    useWorkspaceStore().reset();
+    user.value = null;
+    initialized.value = true;
+    error.value = "";
+  }
+
   function clearError(): void {
     error.value = "";
   }
 
-  return { user, initialized, error, initialize, register, login, logout, clearError };
+  return { user, initialized, error, initialize, register, login, logout, expireSession, clearError };
 });

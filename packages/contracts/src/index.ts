@@ -136,6 +136,47 @@ export interface ProjectTasksResponse {
   labels: ProjectLabelSummary[];
 }
 
+export interface RealtimeTaskEvent {
+  projectId: string;
+  taskId: string | null;
+  actorId: string;
+  action: "created" | "updated" | "deleted" | "commented" | "labels-updated";
+}
+
+export interface PresenceUser {
+  id: string;
+  name: string;
+}
+
+export interface ProjectPresenceEvent {
+  projectId: string;
+  users: PresenceUser[];
+}
+
+export type NotificationType =
+  | "TASK_ASSIGNED"
+  | "TASK_MENTIONED"
+  | "COMMENT_ADDED"
+  | "DUE_DATE_REMINDER"
+  | "PROJECT_UPDATED"
+  | "INVITATION_RECEIVED";
+
+export interface NotificationSummary {
+  id: string;
+  type: NotificationType;
+  entityType: string;
+  entityId: string;
+  createdAt: string;
+  readAt: string | null;
+  actor: Pick<AuthenticatedUser, "id" | "name"> | null;
+  task: { title: string; projectId: string; projectName: string } | null;
+}
+
+export interface NotificationsResponse {
+  notifications: NotificationSummary[];
+  unreadCount: number;
+}
+
 export interface TaskResponse {
   task: TaskDetail;
 }

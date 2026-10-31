@@ -14,6 +14,7 @@ import type {
 } from "@orbit/contracts";
 import { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { EmailService } from "./email.service";
 import { WorkspaceAccessService } from "./workspace-access.service";
 
@@ -31,6 +32,7 @@ export class WorkspacesService {
     private readonly prisma: PrismaService,
     private readonly access: WorkspaceAccessService,
     private readonly email: EmailService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   async list(userId: string): Promise<WorkspaceSummary[]> {
@@ -172,6 +174,7 @@ export class WorkspacesService {
     await this.prisma.workspaceMember.delete({
       where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
     });
+    await this.realtime.revokeWorkspaceAccess(workspaceId, targetUserId);
   }
 
   async listInvitations(

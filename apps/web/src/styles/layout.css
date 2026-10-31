@@ -170,6 +170,7 @@
 
 .workspace-avatar {
   display: grid;
+  position: relative;
   width: 34px;
   height: 34px;
   flex: 0 0 auto;
@@ -655,6 +656,92 @@ kbd {
 .notification-empty>span:last-child {
   color: var(--muted);
   font-size: 11px;
+}
+
+.notification-count {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #d84c57;
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.notification-mark-read {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: #5b52cc;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.notification-list {
+  display: grid;
+  max-height: 340px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notification-item {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 8px;
+  border: 0;
+  border-top: 1px solid #f0f1f5;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.notification-item:hover,
+.notification-item--unread {
+  background: #f8f7ff;
+}
+
+.notification-item-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.notification-item--unread .notification-item-dot {
+  background: var(--accent);
+}
+
+.notification-item-copy {
+  display: grid;
+  gap: 4px;
+  color: #414b60;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.notification-item-copy small {
+  color: #8992a2;
+  font-size: 8.5px;
+}
+
+.notification-error {
+  margin: 0;
+  padding: 8px 10px;
+  color: #a63e3e;
+  font-size: 10px;
 }
 
 .profile-popover {

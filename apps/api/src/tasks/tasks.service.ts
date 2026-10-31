@@ -14,7 +14,9 @@ import type {
   TaskSummary,
   TaskWorkspaceMember,
 } from "@orbit/contracts";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { WorkspaceAccessService } from "../workspaces/workspace-access.service";
 
 const taskInclude = {
@@ -40,6 +42,8 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceAccess: WorkspaceAccessService,
+    private readonly realtime: RealtimeGateway,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async listProjectTasks(userId: string, projectId: string): Promise<ProjectTasksResponse> {
@@ -134,25 +138,43 @@ export class TasksService {
     await this.requireLabels(projectId, input.labelIds ?? []);
     const position = await this.nextPosition(projectId, input.statusId);
 
-    const task = await this.prisma.task.create({
-      data: {
-        projectId,
-        title: input.title.trim(),
-        description: input.description?.trim() || null,
-        statusId: input.statusId,
-        priority: input.priority ?? "MEDIUM",
-        assigneeId: input.assigneeId || null,
-        reporterId: userId,
-        startDate: this.parseDate(input.startDate),
-        dueDate: this.parseDate(input.dueDate),
-        position,
-        ...(input.labelIds?.length
-          ? { labels: { create: input.labelIds.map((labelId) => ({ labelId })) } }
-          : {}),
-      },
-      include: taskInclude,
+    const { task, notification } = await this.prisma.$transaction(async (transaction) => {
+      const createdTask = await transaction.task.create({
+        data: {
+          projectId,
+          title: input.title.trim(),
+          description: input.description?.trim() || null,
+          statusId: input.statusId,
+          priority: input.priority ?? "MEDIUM",
+          assigneeId: input.assigneeId || null,
+          reporterId: userId,
+          startDate: this.parseDate(input.startDate),
+          dueDate: this.parseDate(input.dueDate),
+          position,
+          ...(input.labelIds?.length
+            ? { labels: { create: input.labelIds.map((labelId) => ({ labelId })) } }
+            : {}),
+        },
+        include: taskInclude,
+      });
+      return {
+        task: createdTask,
+        notification: await this.notifications.createTaskAssignment(
+          transaction,
+          userId,
+          createdTask.id,
+          createdTask.assigneeId,
+        ),
+      };
     });
 
+    if (notification) this.notifications.publishCreated(notification);
+    this.realtime.publishTaskEvent({
+      projectId,
+      taskId: task.id,
+      actorId: userId,
+      action: "created",
+    });
     return this.toDetail(task, userId);
   }
 
@@ -179,47 +201,93 @@ export class TasksService {
     if (input.labelIds !== undefined) await this.requireLabels(task.projectId, input.labelIds);
 
     const statusChanged = input.statusId !== undefined && input.statusId !== task.statusId;
-    const updated = await this.prisma.task.update({
-      where: { id: taskId },
-      data: {
-        ...(input.title !== undefined ? { title: input.title.trim() } : {}),
-        ...(input.description !== undefined
-          ? { description: input.description?.trim() || null }
-          : {}),
-        ...(input.statusId !== undefined ? { statusId: input.statusId } : {}),
-        ...(input.priority !== undefined ? { priority: input.priority } : {}),
-        ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId || null } : {}),
-        ...(input.startDate !== undefined ? { startDate: this.parseDate(input.startDate) } : {}),
-        ...(input.dueDate !== undefined ? { dueDate: this.parseDate(input.dueDate) } : {}),
-        ...(statusChanged ? { position: await this.nextPosition(task.projectId, input.statusId!) } : {}),
-        version: { increment: 1 },
-        ...(input.labelIds !== undefined
-          ? {
-              labels: {
-                deleteMany: {},
-                ...(input.labelIds.length
-                  ? { create: input.labelIds.map((labelId) => ({ labelId })) }
-                  : {}),
-              },
-            }
-          : {}),
-      },
-      include: taskInclude,
+    const data: Prisma.TaskUpdateInput = {
+      ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+      ...(input.description !== undefined
+        ? { description: input.description?.trim() || null }
+        : {}),
+      ...(input.statusId !== undefined ? { statusId: { connect: { id: input.statusId } } } : {}),
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
+      ...(input.assigneeId !== undefined
+        ? { assignee: input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true } }
+        : {}),
+      ...(input.startDate !== undefined ? { startDate: this.parseDate(input.startDate) } : {}),
+      ...(input.dueDate !== undefined ? { dueDate: this.parseDate(input.dueDate) } : {}),
+      ...(statusChanged ? { position: await this.nextPosition(task.projectId, input.statusId!) } : {}),
+      version: { increment: 1 },
+      ...(input.labelIds !== undefined
+        ? {
+            labels: {
+              deleteMany: {},
+              ...(input.labelIds.length
+                ? { create: input.labelIds.map((labelId) => ({ labelId })) }
+                : {}),
+            },
+          }
+        : {}),
+    };
+    const { updated, notification } = await this.prisma.$transaction(async (transaction) => {
+      const savedTask = await transaction.task.update({
+        where: { id: taskId },
+        data,
+        include: taskInclude,
+      });
+      const assignmentNotification =
+        input.assigneeId !== undefined && input.assigneeId !== task.assigneeId
+          ? await this.notifications.createTaskAssignment(
+              transaction,
+              userId,
+              taskId,
+              savedTask.assigneeId,
+            )
+          : undefined;
+      return { updated: savedTask, notification: assignmentNotification };
     });
 
+    if (notification) this.notifications.publishCreated(notification);
+    this.realtime.publishTaskEvent({
+      projectId: task.projectId,
+      taskId,
+      actorId: userId,
+      action: "updated",
+    });
     return this.toDetail(updated, userId);
   }
 
   async deleteTask(userId: string, taskId: string): Promise<void> {
-    await this.requireTask(taskId, userId);
+    const task = await this.requireTask(taskId, userId);
     await this.prisma.task.delete({ where: { id: taskId } });
+    this.realtime.publishTaskEvent({
+      projectId: task.projectId,
+      taskId,
+      actorId: userId,
+      action: "deleted",
+    });
   }
 
   async createComment(userId: string, taskId: string, body: string): Promise<TaskCommentSummary> {
-    await this.requireTask(taskId, userId);
-    const comment = await this.prisma.comment.create({
-      data: { taskId, authorId: userId, body: body.trim() },
-      include: { author: { select: { id: true, name: true } } },
+    const task = await this.requireTask(taskId, userId);
+    const { comment, notifications } = await this.prisma.$transaction(async (transaction) => {
+      const createdComment = await transaction.comment.create({
+        data: { taskId, authorId: userId, body: body.trim() },
+        include: { author: { select: { id: true, name: true } } },
+      });
+      return {
+        comment: createdComment,
+        notifications: await this.notifications.createCommentNotifications(
+          transaction,
+          userId,
+          taskId,
+          createdComment.body,
+        ),
+      };
+    });
+    for (const notification of notifications) this.notifications.publishCreated(notification);
+    this.realtime.publishTaskEvent({
+      projectId: task.projectId,
+      taskId,
+      actorId: userId,
+      action: "commented",
     });
     return {
       id: comment.id,
@@ -238,7 +306,7 @@ export class TasksService {
   ): Promise<TaskCommentSummary> {
     const comment = await this.prisma.comment.findFirst({
       where: { id: commentId, deletedAt: null, task: { project: { workspace: { members: { some: { userId } } } } } },
-      select: { id: true, authorId: true },
+      select: { id: true, authorId: true, taskId: true, task: { select: { projectId: true } } },
     });
     if (!comment) throw new NotFoundException("Comment not found.");
     if (comment.authorId !== userId) throw new ForbiddenException("Only the comment author can edit it.");
@@ -246,6 +314,12 @@ export class TasksService {
       where: { id: commentId },
       data: { body: body.trim() },
       include: { author: { select: { id: true, name: true } } },
+    });
+    this.realtime.publishTaskEvent({
+      projectId: comment.task.projectId,
+      taskId: comment.taskId,
+      actorId: userId,
+      action: "commented",
     });
     return {
       id: updated.id,
@@ -260,11 +334,17 @@ export class TasksService {
   async deleteComment(userId: string, commentId: string): Promise<void> {
     const comment = await this.prisma.comment.findFirst({
       where: { id: commentId, deletedAt: null, task: { project: { workspace: { members: { some: { userId } } } } } },
-      select: { id: true, authorId: true },
+      select: { id: true, authorId: true, taskId: true, task: { select: { projectId: true } } },
     });
     if (!comment) throw new NotFoundException("Comment not found.");
     if (comment.authorId !== userId) throw new ForbiddenException("Only the comment author can delete it.");
     await this.prisma.comment.update({ where: { id: commentId }, data: { deletedAt: new Date() } });
+    this.realtime.publishTaskEvent({
+      projectId: comment.task.projectId,
+      taskId: comment.taskId,
+      actorId: userId,
+      action: "commented",
+    });
   }
 
   async listLabels(userId: string, projectId: string): Promise<ProjectLabelSummary[]> {
@@ -294,6 +374,12 @@ export class TasksService {
         data: { projectId, name, color: input.color ?? "#6259D9" },
         include: { _count: { select: { tasks: true } } },
       });
+      this.realtime.publishTaskEvent({
+        projectId,
+        taskId: null,
+        actorId: userId,
+        action: "labels-updated",
+      });
       return { id: label.id, name: label.name, color: label.color, taskCount: 0 };
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -321,6 +407,12 @@ export class TasksService {
         },
         include: { _count: { select: { tasks: true } } },
       });
+      this.realtime.publishTaskEvent({
+        projectId,
+        taskId: null,
+        actorId: userId,
+        action: "labels-updated",
+      });
       return {
         id: label.id,
         name: label.name,
@@ -339,6 +431,12 @@ export class TasksService {
     await this.requireProject(projectId, userId);
     const result = await this.prisma.label.deleteMany({ where: { id: labelId, projectId } });
     if (result.count === 0) throw new NotFoundException("Label not found.");
+    this.realtime.publishTaskEvent({
+      projectId,
+      taskId: null,
+      actorId: userId,
+      action: "labels-updated",
+    });
   }
 
   async addDependency(userId: string, taskId: string, dependsOnTaskId: string): Promise<TaskDetail> {
@@ -377,6 +475,12 @@ export class TasksService {
       }
       throw error;
     }
+    this.realtime.publishTaskEvent({
+      projectId: task.projectId,
+      taskId,
+      actorId: userId,
+      action: "updated",
+    });
     return this.getTask(userId, taskId);
   }
 
@@ -386,6 +490,12 @@ export class TasksService {
       where: { taskId, dependsOnTaskId, task: { projectId: task.projectId } },
     });
     if (dependency.count === 0) throw new NotFoundException("Task dependency not found.");
+    this.realtime.publishTaskEvent({
+      projectId: task.projectId,
+      taskId,
+      actorId: userId,
+      action: "updated",
+    });
     return this.getTask(userId, taskId);
   }
 

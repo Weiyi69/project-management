@@ -4,6 +4,7 @@ import * as argon2 from "argon2";
 import type { AuthenticatedUser } from "@orbit/contracts";
 import { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { SESSION_DURATION_SECONDS, createSessionToken, hashSessionToken } from "./auth-session";
 
 const userWithWorkspace = {
@@ -16,7 +17,10 @@ const userWithWorkspace = {
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async register(input: { name: string; email: string; password: string }): Promise<{
     user: AuthenticatedUser;
@@ -100,10 +104,18 @@ export class AuthService {
       return;
     }
 
+    const tokenHash = hashSessionToken(token);
+    const session = await this.prisma.refreshSession.findUnique({
+      where: { tokenHash },
+      select: { id: true, userId: true, revokedAt: true },
+    });
+    if (!session || session.revokedAt) return;
+
     await this.prisma.refreshSession.updateMany({
-      where: { tokenHash: hashSessionToken(token), revokedAt: null },
+      where: { id: session.id, tokenHash, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    await this.realtime.revokeSession(session.userId, session.id);
   }
 
   private async startSession(user: AuthenticatedUser): Promise<{

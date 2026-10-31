@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ArrowRight,
   CalendarDays,
@@ -19,6 +19,8 @@ import {
 import type {
   ProjectLabelSummary,
   ProjectSummary,
+  PresenceUser,
+  RealtimeTaskEvent,
   TaskCommentSummary,
   TaskDetail,
   TaskPriority,
@@ -26,6 +28,7 @@ import type {
   TaskWorkspaceMember,
 } from "@orbit/contracts";
 import { taskApi } from "../../lib/task-api";
+import { getRealtimeSocket, joinProjectRoom } from "../../lib/realtime";
 
 const props = defineProps<{ project: ProjectSummary }>();
 
@@ -44,11 +47,13 @@ interface TaskDraft {
 const tasks = ref<TaskSummary[]>([]);
 const members = ref<TaskWorkspaceMember[]>([]);
 const labels = ref<ProjectLabelSummary[]>([]);
+const presenceUsers = ref<PresenceUser[]>([]);
 const statuses = computed(() => props.project.statuses);
 const mode = ref<ViewMode>("kanban");
 const loading = ref(true);
 const submitting = ref(false);
 const error = ref("");
+const realtimeError = ref("");
 const taskDialogOpen = ref(false);
 const taskDetail = ref<TaskDetail | null>(null);
 const draft = ref<TaskDraft>(emptyDraft());
@@ -61,6 +66,8 @@ const editingLabelId = ref("");
 const editingLabelName = ref("");
 const editingLabelColor = ref("");
 const calendarDate = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+const realtime = getRealtimeSocket();
+let leaveProjectRoom: (() => void) | undefined;
 
 const priorityLabels: Record<TaskPriority, string> = {
   LOW: "Low",
@@ -400,8 +407,63 @@ function onDialogKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape" && !submitting.value) taskDialogOpen.value = false;
 }
 
-onMounted(loadTasks);
-watch(() => props.project.id, loadTasks);
+function onTaskChanged(event: RealtimeTaskEvent): void {
+  if (event.projectId !== props.project.id) return;
+  void loadTasks();
+  if (event.action === "labels-updated" && taskDetail.value) {
+    void reloadDetail(taskDetail.value.id).catch((caught: unknown) => {
+      error.value = caught instanceof Error ? caught.message : "Could not sync task changes.";
+    });
+    return;
+  }
+  if (taskDetail.value?.id === event.taskId) {
+    if (event.action === "deleted") {
+      taskDetail.value = null;
+      taskDialogOpen.value = false;
+    } else {
+      void reloadDetail(event.taskId).catch((caught: unknown) => {
+        error.value = caught instanceof Error ? caught.message : "Could not sync task changes.";
+      });
+    }
+  }
+}
+
+function onPresenceChanged(event: { projectId: string; users: PresenceUser[] }): void {
+  if (event.projectId === props.project.id) presenceUsers.value = event.users;
+}
+
+function onRealtimeConnectionError(): void {
+  realtimeError.value = "Live updates are unavailable. The app will keep trying to reconnect.";
+}
+
+function onRealtimeConnected(): void {
+  realtimeError.value = "";
+}
+
+onMounted(() => {
+  void loadTasks();
+  leaveProjectRoom = joinProjectRoom(props.project.id);
+  realtime.on("task:changed", onTaskChanged);
+  realtime.on("presence:update", onPresenceChanged);
+  realtime.on("connect_error", onRealtimeConnectionError);
+  realtime.on("connect", onRealtimeConnected);
+});
+watch(
+  () => props.project.id,
+  (projectId) => {
+    leaveProjectRoom?.();
+    presenceUsers.value = [];
+    leaveProjectRoom = joinProjectRoom(projectId);
+    void loadTasks();
+  },
+);
+onBeforeUnmount(() => {
+  leaveProjectRoom?.();
+  realtime.off("task:changed", onTaskChanged);
+  realtime.off("presence:update", onPresenceChanged);
+  realtime.off("connect_error", onRealtimeConnectionError);
+  realtime.off("connect", onRealtimeConnected);
+});
 </script>
 
 <template>
@@ -413,6 +475,22 @@ watch(() => props.project.id, loadTasks);
         <p class="page-subtitle">Plan and track the work in this project.</p>
       </div>
       <div class="task-heading-actions">
+        <div
+          v-if="presenceUsers.length"
+          class="task-presence"
+          :aria-label="`${presenceUsers.length} collaborators online`"
+          :title="presenceUsers.map(({ name }) => name).join(', ')"
+        >
+          <span
+            v-for="user in presenceUsers.slice(0, 4)"
+            :key="user.id"
+            class="task-presence-avatar"
+            :aria-label="user.name"
+          >{{ user.name.trim().charAt(0).toUpperCase() }}</span>
+          <span v-if="presenceUsers.length > 4" class="task-presence-more">
+            +{{ presenceUsers.length - 4 }}
+          </span>
+        </div>
         <button class="button button--quiet task-label-toggle" type="button" @click="labelDialogOpen = !labelDialogOpen">
           <Tag :size="15" /> Labels
         </button>
@@ -422,6 +500,7 @@ watch(() => props.project.id, loadTasks);
       </div>
     </header>
 
+    <p v-if="realtimeError" class="realtime-status" role="status">{{ realtimeError }}</p>
     <p v-if="error && !taskDialogOpen && !labelDialogOpen" class="project-error" role="alert">{{ error }}</p>
     <div v-if="loading" class="project-loading" role="status">
       <LoaderCircle class="project-spinner" :size="20" /> Loading tasks…
@@ -652,7 +731,7 @@ watch(() => props.project.id, loadTasks);
             </ul>
             <form class="task-comment-form" @submit.prevent="addComment">
               <label class="sr-only" for="task-comment">Add a comment</label>
-              <textarea id="task-comment" v-model="commentDraft" maxlength="5000" rows="2" placeholder="Write a comment…" required></textarea>
+              <textarea id="task-comment" v-model="commentDraft" maxlength="5000" rows="2" placeholder="Write a comment; use @email to mention a workspace member…" required></textarea>
               <button class="button button--primary" type="submit" :disabled="submitting || !commentDraft.trim()"><Plus :size="14" /> Comment</button>
             </form>
           </section>

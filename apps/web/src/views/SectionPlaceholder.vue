@@ -17,9 +17,6 @@ const previewCopy = computed(() => {
   if (route.name === "calendar") {
     return "Calendar view is available in a project's Tasks section. A workspace-wide calendar is not connected yet.";
   }
-  if (route.name === "inbox") {
-    return "Workspace notifications and mentions will be connected in a later stage.";
-  }
   if (route.name === "analytics") {
     return "Workspace and project analytics will be connected in a later stage.";
   }

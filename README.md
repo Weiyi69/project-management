@@ -1,6 +1,6 @@
 # ORBIT
 
-ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–5 are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, and project task planning.
+ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–6 are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, project task planning, and Socket.IO-based task synchronization, presence, and in-app notifications.
 
 Local development targets Windows 10/11 with PostgreSQL installed natively and managed through pgAdmin 4. Docker Desktop is not required.
 
@@ -112,10 +112,13 @@ Project task management provides Kanban, table, and monthly calendar views. Work
 - `POST /api/v1/tasks/:taskId/comments`; `PATCH` and `DELETE /api/v1/comments/:commentId`
 - `POST` and `DELETE /api/v1/tasks/:taskId/dependencies...`
 - `GET /api/v1/invitations/preview/:token` and authenticated `POST /api/v1/invitations/accept`
+- Authenticated `GET /api/v1/notifications`, `PATCH /api/v1/notifications/:notificationId/read`, and `PATCH /api/v1/notifications/read-all`
 
 Role permissions: workspace owners can rename/delete their empty workspace, grant/revoke admin roles, invite admins or members, and manage projects. Workspace admins can invite/manage members and manage projects, but cannot rename/delete workspaces or grant/administer other admins. Members can view workspace projects and project details, but cannot create or edit projects. Owners cannot be removed or demoted. Invitations cannot grant the owner role.
 
-The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. Task boards, table/calendar views, task creation and assignment, comments, labels, dependencies, and workspace invitations are connected. Inbox notifications and analytics are later-stage features. Password-reset is intentionally unavailable until an email-delivery provider is configured; the page explains that no email is sent.
+The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. Task boards, table/calendar views, task creation and assignment, comments, labels, dependencies, and workspace invitations are connected. Authenticated Socket.IO sessions use the existing HTTP-only session cookie. Members may join only project rooms for workspaces they currently belong to; task and comment changes are broadcast to those rooms, and project presence is ephemeral on the single API instance. Removing a workspace member also removes their active sockets from that workspace's project rooms. In-app notifications are persisted for task assignments and comments; comments can mention workspace members with their email address (for example `@person@example.com`). The notification menu and Inbox page support unread counts and read state across connected sessions. Multi-instance deployments need a shared Socket.IO adapter for cross-instance rooms and presence. Due-date reminders and analytics are not implemented. Password-reset is intentionally unavailable until an email-delivery provider is configured; the page explains that no email is sent.
+
+The Vite development server proxies both `/api` and `/socket.io` to the local API. A production deployment must route the same paths (including WebSocket upgrades for `/socket.io`) to the API service.
 
 ## Useful commands
 
@@ -129,6 +132,7 @@ The sidebar, responsive mobile navigation, workspace menu, notification/profile 
 | `corepack pnpm db:studio` | Open Prisma Studio |
 | `corepack pnpm typecheck` | Type-check workspace packages |
 | `corepack pnpm build` | Build all workspace packages |
+| `corepack pnpm test:realtime` | Test Socket.IO authentication, room access, task and notification events, presence, and session revocation |
 
 ## Workspace layout
 
@@ -147,4 +151,4 @@ prisma/
 
 ## Scope and next stages
 
-Stages 1–4 establish the technical foundation, frontend experience, local account authentication, and workspace/project management with invitations and role permissions. Task workflows, project-specific member management, password reset, real-time collaboration, analytics, automated feature tests, and deployment are not implemented yet. Remaining preview screens are not database-backed product workflows. This local-development implementation is not production-ready without additional operational hardening.
+Stages 1–6 establish the technical foundation, frontend experience, local account authentication, workspace/project management, task workflows, and real-time task collaboration. Analytics, project-specific member management, password reset, due-date reminder scheduling, comprehensive feature tests beyond focused realtime coverage, and deployment are not implemented yet. Remaining preview screens are not database-backed product workflows. This local-development implementation is not production-ready without additional operational hardening.

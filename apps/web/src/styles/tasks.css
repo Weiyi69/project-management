@@ -2,6 +2,12 @@
   margin-top: 30px;
 }
 
+.realtime-status {
+  margin: 0 0 12px;
+  color: #8a641c;
+  font-size: 10px;
+}
+
 .task-workspace-heading,
 .task-heading-actions,
 .task-view-tabs,
@@ -38,6 +44,37 @@
 
 .task-heading-actions {
   gap: 8px;
+}
+
+.task-presence {
+  display: flex;
+  align-items: center;
+  padding-left: 5px;
+}
+
+.task-presence-avatar,
+.task-presence-more {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  margin-left: -5px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #eeedff;
+  color: #5148c8;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.task-presence-avatar:nth-child(2n) {
+  background: #e9f5ef;
+  color: #347b53;
+}
+
+.task-presence-more {
+  background: #f1f2f6;
+  color: #697488;
 }
 
 .task-heading-actions .button,

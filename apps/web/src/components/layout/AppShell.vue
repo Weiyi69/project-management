@@ -15,8 +15,12 @@ import {
   UserRound,
   X,
 } from "@lucide/vue";
+import type { NotificationSummary } from "@orbit/contracts";
 import AppSidebar from "./AppSidebar.vue";
 import CommandPalette from "./CommandPalette.vue";
+import { notificationApi } from "../../lib/notification-api";
+import { notificationMessage } from "../../lib/notification-presentation";
+import { connectRealtime, disconnectRealtime, getRealtimeSocket } from "../../lib/realtime";
 import { useAuthStore } from "../../stores/auth";
 import { useWorkspaceStore } from "../../stores/workspaces";
 
@@ -31,6 +35,9 @@ const notificationsOpen = ref(false);
 const profileOpen = ref(false);
 const workspaceOpen = ref(false);
 const signOutError = ref("");
+const notifications = ref<NotificationSummary[]>([]);
+const unreadNotificationCount = ref(0);
+const notificationError = ref("");
 const routeTitles = new Map<string, string>([
   ["overview", "Overview"],
   ["my-tasks", "My tasks"],
@@ -68,14 +75,113 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
+function addNotification(notification: NotificationSummary): void {
+  const index = notifications.value.findIndex(({ id }) => id === notification.id);
+  if (index >= 0) {
+    notifications.value[index] = notification;
+    return;
+  }
+  notifications.value.unshift(notification);
+  if (notification.readAt === null) unreadNotificationCount.value += 1;
+}
+
+async function openNotification(notification: NotificationSummary): Promise<void> {
+  notificationError.value = "";
+  try {
+    if (notification.readAt === null) {
+      await notificationApi.markRead(notification.id);
+      if (notification.readAt === null) {
+        notification.readAt = new Date().toISOString();
+        unreadNotificationCount.value = Math.max(0, unreadNotificationCount.value - 1);
+      }
+    }
+    notificationsOpen.value = false;
+    if (notification.task) {
+      await router.push({ name: "project-detail", params: { projectId: notification.task.projectId } });
+    }
+  } catch (caught) {
+    notificationError.value =
+      caught instanceof Error ? caught.message : "Could not open this notification.";
+  }
+}
+
+async function markAllNotificationsRead(): Promise<void> {
+  notificationError.value = "";
+  try {
+    await notificationApi.markAllRead();
+    const readAt = new Date().toISOString();
+    notifications.value = notifications.value.map((notification) => ({
+      ...notification,
+      readAt,
+    }));
+    unreadNotificationCount.value = 0;
+  } catch (caught) {
+    notificationError.value =
+      caught instanceof Error ? caught.message : "Could not mark notifications as read.";
+  }
+}
+
+const realtime = getRealtimeSocket();
+function onRealtimeNotification(notification: NotificationSummary): void {
+  addNotification(notification);
+}
+
+function onRealtimeDisconnect(reason: string): void {
+  if (reason !== "io server disconnect" || !auth.user) return;
+  auth.expireSession();
+  void router.replace({ name: "login", query: { reason: "session-expired" } });
+}
+
+function onNotificationRead(event: { id: string; readAt: string }): void {
+  const notification = notifications.value.find(({ id }) => id === event.id);
+  if (!notification || notification.readAt !== null) return;
+  notification.readAt = event.readAt;
+  unreadNotificationCount.value = Math.max(0, unreadNotificationCount.value - 1);
+}
+
+function onNotificationsReadAll(event: { readAt: string }): void {
+  notifications.value = notifications.value.map((notification) => ({
+    ...notification,
+    readAt: notification.readAt ?? event.readAt,
+  }));
+  unreadNotificationCount.value = 0;
+}
+
 onMounted(() => {
   document.addEventListener("keydown", onKeydown);
   void workspaces.load(auth.user?.workspaceId).catch((caught: unknown) => {
     workspaces.error =
       caught instanceof Error ? caught.message : "Could not load your workspaces.";
   });
+  realtime.on("notification:new", onRealtimeNotification);
+  realtime.on("notification:read", onNotificationRead);
+  realtime.on("notifications:read-all", onNotificationsReadAll);
+  realtime.on("disconnect", onRealtimeDisconnect);
+  connectRealtime();
+  void notificationApi.list().then(
+    (response) => {
+      const liveNotifications = notifications.value.filter(
+        ({ id }) => !response.notifications.some((notification) => notification.id === id),
+      );
+      notifications.value = [...liveNotifications, ...response.notifications];
+      unreadNotificationCount.value =
+        response.unreadCount + liveNotifications.filter(({ readAt }) => readAt === null).length;
+      notificationError.value = "";
+    },
+    (caught: unknown) => {
+      notificationError.value =
+        caught instanceof Error ? caught.message : "Could not load notifications.";
+    },
+  );
 });
-onBeforeUnmount(() => document.removeEventListener("keydown", onKeydown));
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onKeydown);
+  realtime.off("notification:new", onRealtimeNotification);
+  realtime.off("notification:read", onNotificationRead);
+  realtime.off("notifications:read-all", onNotificationsReadAll);
+  realtime.off("disconnect", onRealtimeDisconnect);
+  disconnectRealtime();
+});
 
 function createProject(): void {
   void router.push({ name: "projects" });
@@ -172,19 +278,48 @@ function selectWorkspace(workspaceId: string): void {
               "
             >
               <Bell :size="18" />
+              <span v-if="unreadNotificationCount" class="notification-count" aria-live="polite">
+                {{ unreadNotificationCount > 99 ? "99+" : unreadNotificationCount }}
+              </span>
             </button>
             <section v-if="notificationsOpen" class="popover notification-popover" @click.stop>
               <div class="popover-heading">
                 <div>
                   <h2>Notifications</h2>
-                  <p>Your workspace updates</p>
+                  <p>{{ unreadNotificationCount }} unread</p>
                 </div>
-                <span class="quiet-badge">Preview</span>
+                <button
+                  v-if="unreadNotificationCount"
+                  class="notification-mark-read"
+                  type="button"
+                  @click="markAllNotificationsRead"
+                >
+                  Mark all read
+                </button>
               </div>
-              <div class="notification-empty">
+              <p v-if="notificationError" class="notification-error" role="alert">
+                {{ notificationError }}
+              </p>
+              <ul v-if="notifications.length" class="notification-list">
+                <li v-for="notification in notifications" :key="notification.id">
+                  <button
+                    class="notification-item"
+                    :class="{ 'notification-item--unread': notification.readAt === null }"
+                    type="button"
+                    @click="openNotification(notification)"
+                  >
+                    <span class="notification-item-dot" aria-hidden="true"></span>
+                    <span class="notification-item-copy">
+                      <span>{{ notificationMessage(notification) }}</span>
+                      <small>{{ notification.task?.projectName ?? "ORBIT" }}</small>
+                    </span>
+                  </button>
+                </li>
+              </ul>
+              <div v-else class="notification-empty">
                 <span class="notification-empty-icon"><Check :size="17" /></span>
                 <p>No notifications yet</p>
-                <span>Notifications will appear here in a later stage.</span>
+                <span>Task assignments and mentions will appear here.</span>
               </div>
             </section>
           </div>

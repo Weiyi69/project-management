@@ -1,0 +1,116 @@
+.inbox-page {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.inbox-notification-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.inbox-notification {
+  display: flex;
+  width: 100%;
+  min-height: 76px;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 0;
+  border-bottom: 1px solid #f0f1f5;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.inbox-notification:last-child {
+  border-bottom: 0;
+}
+
+.inbox-notification:hover,
+.inbox-notification--unread {
+  background: #f8f7ff;
+}
+
+.inbox-notification-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: #f0efff;
+  color: var(--accent);
+}
+
+.inbox-notification-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.inbox-notification-copy strong {
+  overflow: hidden;
+  color: #414b60;
+  font-size: 11px;
+  font-weight: 570;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+}
+
+.inbox-notification-copy>span,
+.inbox-notification time {
+  color: #8992a2;
+  font-size: 9px;
+}
+
+.inbox-notification time {
+  flex: 0 0 auto;
+}
+
+.inbox-unread-indicator {
+  flex: 0 0 auto;
+  color: #5b52cc;
+  font-size: 9px;
+  font-weight: 620;
+}
+
+.inbox-empty {
+  display: grid;
+  min-height: 260px;
+  justify-items: center;
+  align-content: center;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  text-align: center;
+}
+
+.inbox-empty h2 {
+  margin: 12px 0 4px;
+  color: #30394c;
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.inbox-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  .inbox-notification {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .inbox-notification time {
+    display: none;
+  }
+}
