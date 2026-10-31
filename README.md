@@ -133,6 +133,7 @@ The Vite development server proxies both `/api` and `/socket.io` to the local AP
 | `corepack pnpm typecheck` | Type-check workspace packages |
 | `corepack pnpm build` | Build all workspace packages |
 | `corepack pnpm test:realtime` | Test Socket.IO authentication, room access, task and notification events, presence, and session revocation |
+| `corepack pnpm test:tasks` | Test task update service behavior |
 
 ## Workspace layout
 

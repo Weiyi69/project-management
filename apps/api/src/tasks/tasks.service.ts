@@ -206,7 +206,7 @@ export class TasksService {
       ...(input.description !== undefined
         ? { description: input.description?.trim() || null }
         : {}),
-      ...(input.statusId !== undefined ? { statusId: { connect: { id: input.statusId } } } : {}),
+      ...(input.statusId !== undefined ? { status: { connect: { id: input.statusId } } } : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...(input.assigneeId !== undefined
         ? { assignee: input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true } }

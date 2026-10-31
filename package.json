@@ -7,12 +7,13 @@
     "node": ">=20.19"
   },
   "scripts": {
-    "dev": "corepack pnpm --filter @orbit/contracts build && corepack pnpm --parallel --filter @orbit/web --filter @orbit/api run dev",
+    "dev": "corepack pnpm --filter @orbit/contracts build && corepack pnpm -r --parallel --filter=@orbit/web --filter=@orbit/api run dev",
     "dev:web": "corepack pnpm --filter @orbit/contracts build && corepack pnpm --filter @orbit/web dev",
     "dev:api": "corepack pnpm --filter @orbit/contracts build && corepack pnpm --filter @orbit/api start:dev",
     "build": "corepack pnpm --recursive --if-present build",
     "typecheck": "corepack pnpm exec tsc --noEmit -p prisma/tsconfig.json && corepack pnpm --filter @orbit/contracts build && corepack pnpm --recursive --if-present typecheck",
     "test:realtime": "corepack pnpm exec tsx --tsconfig apps/api/tsconfig.json --test apps/api/src/realtime/realtime.gateway.spec.ts",
+    "test:tasks": "corepack pnpm exec tsx --tsconfig apps/api/tsconfig.json --test apps/api/src/tasks/tasks.service.spec.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
