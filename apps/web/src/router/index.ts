@@ -2,8 +2,12 @@ import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import AppShell from "../components/layout/AppShell.vue";
 import AuthView from "../views/AuthView.vue";
+import AcceptInvitationView from "../views/AcceptInvitationView.vue";
+import ProjectDetailView from "../views/ProjectDetailView.vue";
+import ProjectsView from "../views/ProjectsView.vue";
 import SectionPlaceholder from "../views/SectionPlaceholder.vue";
 import WorkspaceOverview from "../views/WorkspaceOverview.vue";
+import WorkspaceSettingsView from "../views/WorkspaceSettingsView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -40,10 +44,18 @@ export const router = createRouter({
         {
           path: "projects",
           name: "projects",
-          component: SectionPlaceholder,
+          component: ProjectsView,
           meta: {
             title: "Projects",
             description: "Plan work, bring people together, and keep momentum.",
+          },
+        },
+        {
+          path: "projects/:projectId",
+          name: "project-detail",
+          component: ProjectDetailView,
+          meta: {
+            title: "Project",
           },
         },
         {
@@ -67,7 +79,7 @@ export const router = createRouter({
         {
           path: "settings",
           name: "settings",
-          component: SectionPlaceholder,
+          component: WorkspaceSettingsView,
           meta: {
             title: "Settings",
             description: "Manage your workspace and personal preferences.",
@@ -92,6 +104,12 @@ export const router = createRouter({
       name: "forgot-password",
       component: AuthView,
       meta: { title: "Reset password", public: true },
+    },
+    {
+      path: "/invitations/accept",
+      name: "invitation-accept",
+      component: AcceptInvitationView,
+      meta: { title: "Accept invitation", public: true },
     },
     {
       path: "/:pathMatch(.*)*",

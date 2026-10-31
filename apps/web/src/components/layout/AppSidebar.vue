@@ -1,23 +1,30 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { ArrowUpRight, Check, ChevronDown, ChevronsUpDown } from "@lucide/vue";
-import type { AuthenticatedUser } from "@orbit/contracts";
+import type { AuthenticatedUser, WorkspaceSummary } from "@orbit/contracts";
 import { mainNavigation, settingsNavigation } from "../../lib/navigation";
 
-defineProps<{
+const props = defineProps<{
   collapsed: boolean;
   mobileOpen: boolean;
   workspaceOpen: boolean;
   user: AuthenticatedUser;
+  workspaces: WorkspaceSummary[];
+  selectedWorkspaceId: string;
 }>();
 
 const emit = defineEmits<{
   navigate: [];
   toggleWorkspace: [];
+  selectWorkspace: [id: string];
   createProject: [];
 }>();
 
 const route = useRoute();
+const selectedWorkspace = computed(
+  () => props.workspaces.find((workspace) => workspace.id === props.selectedWorkspaceId) ?? null,
+);
 </script>
 
 <template>
@@ -51,25 +58,34 @@ const route = useRoute();
       :aria-expanded="workspaceOpen"
       @click.stop="emit('toggleWorkspace')"
     >
-      <span class="workspace-avatar" aria-hidden="true">{{ user.workspaceName.charAt(0).toUpperCase() }}</span>
+      <span class="workspace-avatar" aria-hidden="true">{{
+        (selectedWorkspace?.name ?? user.workspaceName).charAt(0).toUpperCase()
+      }}</span>
       <span v-if="!collapsed" class="workspace-copy">
-        <span class="workspace-name">{{ user.workspaceName }}</span>
-        <span class="workspace-plan">Your workspace</span>
+        <span class="workspace-name">{{ selectedWorkspace?.name ?? user.workspaceName }}</span>
+        <span class="workspace-plan">{{ selectedWorkspace?.role.toLowerCase() ?? "workspace" }}</span>
       </span>
       <ChevronsUpDown v-if="!collapsed" class="workspace-chevron" :size="15" />
     </button>
     <section v-if="workspaceOpen" class="workspace-menu" aria-label="Workspace switcher">
       <p class="workspace-menu-label">YOUR WORKSPACES</p>
-      <div class="workspace-menu-current">
+      <button
+        v-for="workspace in workspaces"
+        :key="workspace.id"
+        class="workspace-menu-current workspace-menu-option"
+        type="button"
+        :aria-current="workspace.id === selectedWorkspaceId ? 'true' : undefined"
+        @click.stop="emit('selectWorkspace', workspace.id)"
+      >
         <span class="workspace-avatar workspace-avatar--menu" aria-hidden="true">{{
-          user.workspaceName.charAt(0).toUpperCase()
+          workspace.name.charAt(0).toUpperCase()
         }}</span>
         <span class="workspace-copy">
-          <span class="workspace-name">{{ user.workspaceName }}</span>
-          <span class="workspace-plan">Your workspace</span>
+          <span class="workspace-name">{{ workspace.name }}</span>
+          <span class="workspace-plan">{{ workspace.role.toLowerCase() }}</span>
         </span>
-        <Check class="workspace-selected" :size="15" />
-      </div>
+        <Check v-if="workspace.id === selectedWorkspaceId" class="workspace-selected" :size="15" />
+      </button>
       <RouterLink class="workspace-menu-link" :to="{ name: 'settings' }" @click="emit('navigate')">
         Workspace options
       </RouterLink>
@@ -108,11 +124,11 @@ const route = useRoute();
     <RouterLink
       class="project-empty"
       :to="{ name: 'projects' }"
-      :title="collapsed ? 'No projects yet' : undefined"
+      :title="collapsed ? 'View projects' : undefined"
       @click="emit('navigate')"
     >
       <span class="project-empty-dot"></span>
-      <span v-if="!collapsed">Project views coming soon</span>
+      <span v-if="!collapsed">View all projects</span>
       <ChevronDown v-if="!collapsed" class="project-empty-chevron" :size="14" />
     </RouterLink>
 

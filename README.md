@@ -1,6 +1,6 @@
 # ORBIT
 
-ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–3 are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, navigation, preview pages, PostgreSQL/Prisma foundation, and local account registration/sign-in with server-managed sessions.
+ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–5 are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, and project task planning.
 
 Local development targets Windows 10/11 with PostgreSQL installed natively and managed through pgAdmin 4. Docker Desktop is not required.
 
@@ -66,11 +66,11 @@ corepack pnpm db:seed
 ```
 
 Prisma creates versioned migration SQL under `prisma/migrations`. Inspect it or the resulting tables through pgAdmin under **orbit_db → Schemas → public → Tables**.
-The initial migration rejects a task depending on itself. Multi-task dependency-cycle detection will be implemented in the backend task service in a later stage.
+The initial migration rejects a task depending on itself. The task API also rejects dependencies that would create a multi-task cycle.
 
 To develop a later schema change, create a migration with `corepack pnpm exec prisma migrate dev --name <migration-name>`. Prisma Migrate uses a shadow database for development and may require the database role to have `CREATEDB`. If `orbit_user` should remain a least-privilege application role, create a separate local shadow database in pgAdmin, grant `orbit_user` ownership of it, and configure Prisma's `shadowDatabaseUrl` before using `migrate dev`. The initial checked-in migration uses `migrate deploy`, which does not require shadow-database creation.
 
-The seed creates an `Orbit Demo` user, workspace, project, task statuses, tasks, and a label. Its password hash is generated from a fresh random value and no login credential is distributed. The frontend does not yet load seeded project data.
+The seed creates an `Orbit Demo` user, workspace, project, task statuses, tasks, and a label. Its password hash is generated from a fresh random value and no login credential is distributed. The frontend does not yet load the seeded demo user's project data; projects are scoped to the signed-in account's workspace membership.
 
 ## 3. Run the apps
 
@@ -95,7 +95,27 @@ Signed-out visits are directed to sign-in. Open <http://localhost:5173/register>
 
 Authentication endpoints are `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, and `POST /api/v1/auth/logout`. Password-reset remains unavailable until an email-delivery provider is configured; the page does not claim to send a reset email.
 
-The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. The project-management sections remain previews and do not yet load database project/task data. Password-reset is intentionally unavailable until an email-delivery provider is configured; the page explains that no email is sent.
+Workspace settings supports creating and selecting workspaces, renaming a workspace, listing members, changing eligible member roles, sending/revoking invitations, and deleting an empty workspace. Workspace deletion is owner-only and is rejected if the workspace has projects; it never cascades into project data. Invitations are emailed through SMTP. Configure `SMTP_HOST`, `SMTP_PORT` (defaults to `587`), `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM` in the ignored local `.env`. Do not commit credentials. An invitation expires after seven days; invitees must sign in or register with the invited email address to accept.
+
+The Projects section lists projects in the selected workspace. Create a project to save its name and description in PostgreSQL; ORBIT also adds the creator as a project admin and creates To do, In progress, and Done statuses. Open a project to update its details and lifecycle state, manage tasks, or permanently delete it. Project deletion requires typing the project name and also deletes the project's tasks and workflow data.
+
+Project task management provides Kanban, table, and monthly calendar views. Workspace members can create, edit, assign, move, and delete tasks; add/edit/delete comments they authored; manage project labels; and link task dependencies. Assignees must belong to the same workspace. Dependencies are restricted to the same project and cycles are rejected. Calendar entries use task due dates. The task endpoints require a valid session and workspace membership:
+
+- `GET /api/v1/workspaces` and `GET /api/v1/workspaces/current`
+- `POST /api/v1/workspaces`, `GET /api/v1/workspaces/:workspaceId`, `PATCH` and `DELETE /api/v1/workspaces/:workspaceId`
+- `GET /api/v1/workspaces/:workspaceId/members`; `PATCH` and `DELETE /api/v1/workspaces/:workspaceId/members/:userId`
+- `GET`, `POST`, and `DELETE /api/v1/workspaces/:workspaceId/invitations...`
+- `GET /api/v1/projects` and `POST /api/v1/projects`
+- `GET`, `PATCH`, and `DELETE /api/v1/projects/:projectId`
+- `GET` and `POST /api/v1/projects/:projectId/tasks`; `GET`, `PATCH`, and `DELETE /api/v1/tasks/:taskId`
+- `GET`, `POST`, `PATCH`, and `DELETE /api/v1/projects/:projectId/labels...`
+- `POST /api/v1/tasks/:taskId/comments`; `PATCH` and `DELETE /api/v1/comments/:commentId`
+- `POST` and `DELETE /api/v1/tasks/:taskId/dependencies...`
+- `GET /api/v1/invitations/preview/:token` and authenticated `POST /api/v1/invitations/accept`
+
+Role permissions: workspace owners can rename/delete their empty workspace, grant/revoke admin roles, invite admins or members, and manage projects. Workspace admins can invite/manage members and manage projects, but cannot rename/delete workspaces or grant/administer other admins. Members can view workspace projects and project details, but cannot create or edit projects. Owners cannot be removed or demoted. Invitations cannot grant the owner role.
+
+The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. Task boards, table/calendar views, task creation and assignment, comments, labels, dependencies, and workspace invitations are connected. Inbox notifications and analytics are later-stage features. Password-reset is intentionally unavailable until an email-delivery provider is configured; the page explains that no email is sent.
 
 ## Useful commands
 
@@ -127,4 +147,4 @@ prisma/
 
 ## Scope and next stages
 
-Stages 1–3 establish the technical foundation, frontend experience, and local account authentication. Password reset/email delivery, workspace/project APIs, task workflows, real-time collaboration, analytics, automated feature tests, and deployment are not implemented yet. The preview screens are not database-backed product workflows. This local-development authentication implementation is not production-ready without additional operational hardening.
+Stages 1–4 establish the technical foundation, frontend experience, local account authentication, and workspace/project management with invitations and role permissions. Task workflows, project-specific member management, password reset, real-time collaboration, analytics, automated feature tests, and deployment are not implemented yet. Remaining preview screens are not database-backed product workflows. This local-development implementation is not production-ready without additional operational hardening.

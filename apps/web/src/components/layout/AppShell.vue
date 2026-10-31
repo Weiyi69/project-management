@@ -18,10 +18,12 @@ import {
 import AppSidebar from "./AppSidebar.vue";
 import CommandPalette from "./CommandPalette.vue";
 import { useAuthStore } from "../../stores/auth";
+import { useWorkspaceStore } from "../../stores/workspaces";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const workspaces = useWorkspaceStore();
 const sidebarCollapsed = ref(false);
 const mobileSidebarOpen = ref(false);
 const commandOpen = ref(false);
@@ -66,7 +68,13 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-onMounted(() => document.addEventListener("keydown", onKeydown));
+onMounted(() => {
+  document.addEventListener("keydown", onKeydown);
+  void workspaces.load(auth.user?.workspaceId).catch((caught: unknown) => {
+    workspaces.error =
+      caught instanceof Error ? caught.message : "Could not load your workspaces.";
+  });
+});
 onBeforeUnmount(() => document.removeEventListener("keydown", onKeydown));
 
 function createProject(): void {
@@ -85,6 +93,12 @@ async function signOut(): Promise<void> {
   }
 }
 
+function selectWorkspace(workspaceId: string): void {
+  workspaces.select(workspaceId);
+  workspaceOpen.value = false;
+  void router.push({ name: "projects" });
+}
+
 </script>
 
 <template>
@@ -93,6 +107,8 @@ async function signOut(): Promise<void> {
       :collapsed="sidebarCollapsed && !mobileSidebarOpen"
       :mobile-open="mobileSidebarOpen"
       :workspace-open="workspaceOpen"
+      :workspaces="workspaces.workspaces"
+      :selected-workspace-id="workspaces.selectedId"
       :user="auth.user"
       @navigate="
         mobileSidebarOpen = false;
@@ -103,6 +119,7 @@ async function signOut(): Promise<void> {
         notificationsOpen = false;
         profileOpen = false;
       "
+      @select-workspace="selectWorkspace"
       @create-project="createProject"
     />
 
@@ -217,6 +234,9 @@ async function signOut(): Promise<void> {
       </header>
 
       <main class="page-content">
+        <p v-if="workspaces.error" class="project-error workspace-global-error" role="alert">
+          {{ workspaces.error }}
+        </p>
         <RouterView />
       </main>
     </div>

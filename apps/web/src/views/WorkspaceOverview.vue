@@ -90,12 +90,12 @@ const dateLabel = new Intl.DateTimeFormat("en", {
         <RouterLink class="create-project-card" :to="{ name: 'projects' }">
           <span class="create-project-icon"><FolderPlus :size="18" /></span>
           <span class="create-project-copy">
-            <strong>Project management is coming soon</strong>
-            <span>Project data is not shown in this preview yet.</span>
+            <strong>Manage your workspace projects</strong>
+            <span>Create projects, track their status, and keep the details current.</span>
           </span>
           <ArrowRight class="create-project-arrow" :size="16" />
         </RouterLink>
-        <p class="honest-data-note">Explore the project navigation preview to see what’s planned.</p>
+        <p class="honest-data-note">Project details are saved to your local workspace.</p>
       </article>
     </section>
   </div>

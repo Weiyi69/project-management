@@ -39,6 +39,7 @@ export class AuthGuard implements CanActivate {
       id: session.user.id,
       name: session.user.name,
       email: session.user.email,
+      workspaceId: membership?.workspace.id ?? "",
       workspaceName: membership?.workspace.name ?? "Workspace",
     };
 

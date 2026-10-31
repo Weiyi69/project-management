@@ -62,6 +62,16 @@ watch(
   },
 );
 
+watch(
+  () => route.query.email,
+  (invitedEmail) => {
+    if (mode.value === "register" && typeof invitedEmail === "string") {
+      email.value = invitedEmail;
+    }
+  },
+  { immediate: true },
+);
+
 async function submitAuthForm(): Promise<void> {
   if (mode.value === "forgot-password") {
     message.value =

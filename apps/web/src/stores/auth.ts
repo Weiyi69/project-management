@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { AuthenticatedUser } from "@orbit/contracts";
 import { AuthApiError, authApi } from "../lib/auth-api";
+import { useWorkspaceStore } from "./workspaces";
 
 export const useAuthStore = defineStore("auth", () => {
   const user = ref<AuthenticatedUser | null>(null);
@@ -46,6 +47,7 @@ export const useAuthStore = defineStore("auth", () => {
     error.value = "";
     try {
       const response = await authApi.register(input);
+      useWorkspaceStore().reset();
       user.value = response.user;
       initialized.value = true;
     } catch (caught) {
@@ -59,6 +61,7 @@ export const useAuthStore = defineStore("auth", () => {
     error.value = "";
     try {
       const response = await authApi.login(input);
+      useWorkspaceStore().reset();
       user.value = response.user;
       initialized.value = true;
     } catch (caught) {
@@ -72,6 +75,7 @@ export const useAuthStore = defineStore("auth", () => {
     error.value = "";
     try {
       await authApi.logout();
+      useWorkspaceStore().reset();
       user.value = null;
       initialized.value = true;
     } catch (caught) {

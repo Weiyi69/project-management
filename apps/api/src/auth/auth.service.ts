@@ -57,6 +57,7 @@ export class AuthService {
           id: createdUser.id,
           name: createdUser.name,
           email: createdUser.email,
+          workspaceId: workspace.id,
           workspaceName: workspace.name,
         };
       });
@@ -89,6 +90,7 @@ export class AuthService {
       id: user.id,
       name: user.name,
       email: user.email,
+      workspaceId: user.workspaceMemberships[0]?.workspace.id ?? "",
       workspaceName: user.workspaceMemberships[0]?.workspace.name ?? "Workspace",
     });
   }

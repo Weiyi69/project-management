@@ -39,6 +39,8 @@ function parseAuthResponse(value: unknown): AuthResponse {
     typeof value.user.name !== "string" ||
     !("email" in value.user) ||
     typeof value.user.email !== "string" ||
+    !("workspaceId" in value.user) ||
+    typeof value.user.workspaceId !== "string" ||
     !("workspaceName" in value.user) ||
     typeof value.user.workspaceName !== "string"
   ) {
@@ -50,6 +52,7 @@ function parseAuthResponse(value: unknown): AuthResponse {
       id: value.user.id,
       name: value.user.name,
       email: value.user.email,
+      workspaceId: value.user.workspaceId,
       workspaceName: value.user.workspaceName,
     },
   };
