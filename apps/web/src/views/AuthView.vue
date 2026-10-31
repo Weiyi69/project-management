@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { ArrowLeft, ArrowRight, Eye, EyeOff, Sparkles } from "@lucide/vue";
+import { ArrowLeft, ArrowRight, Eye, EyeOff } from "@lucide/vue";
 import { useAuthStore } from "../stores/auth";
 
 type AuthMode = "login" | "register" | "forgot-password";
@@ -97,8 +97,10 @@ async function submitAuthForm(): Promise<void> {
 <template>
   <main class="auth-page">
     <section class="auth-story">
-      <RouterLink class="brand auth-brand" :to="{ name: 'overview' }">
-        <span class="brand-mark" aria-hidden="true"><Sparkles :size="19" /></span>
+      <RouterLink class="brand auth-brand" :to="{ name: 'overview' }" aria-label="ORBIT home">
+        <span class="brand-mark brand-mark--auth" aria-hidden="true">
+          <img src="/images/authentication-logo.png" alt="" />
+        </span>
         <span class="brand-word">orbit<span>.</span></span>
       </RouterLink>
       <div class="auth-story-copy">
@@ -107,7 +109,9 @@ async function submitAuthForm(): Promise<void> {
         <p>{{ copy.subtitle }}</p>
       </div>
       <div class="auth-story-foot">
-        <span class="auth-story-orbit" aria-hidden="true"><Sparkles :size="15" /></span>
+        <span class="auth-story-orbit" aria-hidden="true">
+          <img src="/images/authentication-logo.png" alt="" />
+        </span>
         <span>Clarity for the work that moves you.</span>
       </div>
     </section>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from "vue-router";
-import { ArrowUpRight, Check, ChevronDown, ChevronsUpDown, Sparkles } from "@lucide/vue";
+import { ArrowUpRight, Check, ChevronDown, ChevronsUpDown } from "@lucide/vue";
 import type { AuthenticatedUser } from "@orbit/contracts";
 import { mainNavigation, settingsNavigation } from "../../lib/navigation";
 
@@ -31,8 +31,15 @@ const route = useRoute();
     }"
     aria-label="Main navigation"
   >
-    <RouterLink class="brand" :to="{ name: 'overview' }" @click="emit('navigate')">
-      <span class="brand-mark" aria-hidden="true"><Sparkles :size="19" /></span>
+    <RouterLink
+      class="brand"
+      :to="{ name: 'overview' }"
+      aria-label="ORBIT home"
+      @click="emit('navigate')"
+    >
+      <span class="brand-mark brand-mark--sidebar" aria-hidden="true">
+        <img src="/images/sidebar-logo.png" alt="" />
+      </span>
       <span v-if="!collapsed" class="brand-word">orbit<span>.</span></span>
     </RouterLink>
 

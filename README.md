@@ -116,6 +116,7 @@ The sidebar, responsive mobile navigation, workspace menu, notification/profile 
 apps/
   api/                 NestJS API
   web/                 Vue 3 + Vite frontend
+    public/images/     Static images for the web app
 packages/
   contracts/           Shared TypeScript API contracts
 prisma/
