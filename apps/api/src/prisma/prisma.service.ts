@@ -10,7 +10,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       throw new Error("DATABASE_URL must be configured before starting the API.");
     }
 
-    super({ adapter: new PrismaPg({ connectionString }) });
+    super({ adapter: new PrismaPg({ connectionString, pipeline: true }) });
   }
 
   async onModuleInit(): Promise<void> {

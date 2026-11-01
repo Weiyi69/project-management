@@ -53,7 +53,7 @@ const selectedWorkspace = computed(
     <button
       class="workspace-switcher"
       type="button"
-      :aria-label="collapsed ? 'Current workspace' : 'Switch workspace'"
+      :aria-label="collapsed ? 'Current workspace' : undefined"
       :title="collapsed ? 'Workspace' : undefined"
       :aria-expanded="workspaceOpen"
       @click.stop="emit('toggleWorkspace')"

@@ -8,11 +8,14 @@ const props = defineProps<{
 }>();
 
 const maximum = computed(() => Math.max(1, ...props.items.map((item) => item.value)));
+const headingId = computed(() =>
+  `analytics-chart-${props.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+);
 </script>
 
 <template>
-  <section class="analytics-chart" :aria-label="title">
-    <h3>{{ title }}</h3>
+  <section class="analytics-chart" role="group" :aria-labelledby="headingId">
+    <h3 :id="headingId">{{ title }}</h3>
     <p v-if="items.length === 0" class="analytics-chart-empty">{{ emptyMessage }}</p>
     <div v-else class="analytics-bars" role="list">
       <div v-for="item in items" :key="item.label" class="analytics-bar-row" role="listitem">

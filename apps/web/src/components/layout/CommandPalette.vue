@@ -3,13 +3,16 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ArrowUpRight, Command, Search } from "@lucide/vue";
 import { mainNavigation } from "../../lib/navigation";
+import { trapFocusWithin } from "../../lib/dialog-accessibility";
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const router = useRouter();
 const query = ref("");
 const searchInput = ref<HTMLInputElement | null>(null);
+const dialog = ref<HTMLElement | null>(null);
 const selectedIndex = ref(0);
+let restoreFocus: HTMLElement | null = null;
 
 const matches = computed(() => {
   const search = query.value.trim().toLowerCase();
@@ -21,9 +24,14 @@ watch(
   () => props.open,
   async (open) => {
     if (open) {
+      restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       query.value = "";
       await nextTick();
       searchInput.value?.focus();
+    } else {
+      await nextTick();
+      restoreFocus?.focus();
+      restoreFocus = null;
     }
   },
 );
@@ -52,17 +60,24 @@ function handleSearchKeydown(event: KeyboardEvent): void {
     }
   }
 }
+
+function trapDialogFocus(event: KeyboardEvent): void {
+  trapFocusWithin(event, dialog.value);
+}
 </script>
 
 <template>
   <Teleport to="body">
     <div v-if="open" class="dialog-backdrop command-backdrop" @click.self="emit('close')">
       <section
+        ref="dialog"
         class="command-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="command-title"
+        tabindex="-1"
         @keydown.esc="emit('close')"
+        @keydown="trapDialogFocus"
       >
         <h2 id="command-title" class="sr-only">Search ORBIT</h2>
         <div class="command-search">

@@ -64,8 +64,11 @@ a {
 
 button:focus-visible,
 a:focus-visible,
-input:focus-visible {
-  outline: 3px solid rgb(99 102 241 / 35%);
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 3px solid var(--accent-dark);
   outline-offset: 2px;
 }
 

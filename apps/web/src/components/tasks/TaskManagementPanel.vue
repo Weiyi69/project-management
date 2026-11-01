@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ArrowRight,
   CalendarDays,
@@ -29,6 +29,7 @@ import type {
 } from "@orbit/contracts";
 import { taskApi } from "../../lib/task-api";
 import { getRealtimeSocket, joinProjectRoom } from "../../lib/realtime";
+import { trapFocusWithin } from "../../lib/dialog-accessibility";
 
 const props = defineProps<{ project: ProjectSummary }>();
 
@@ -55,6 +56,7 @@ const submitting = ref(false);
 const error = ref("");
 const realtimeError = ref("");
 const taskDialogOpen = ref(false);
+const taskDialog = ref<HTMLElement | null>(null);
 const taskDetail = ref<TaskDetail | null>(null);
 const draft = ref<TaskDraft>(emptyDraft());
 const commentDraft = ref("");
@@ -68,6 +70,22 @@ const editingLabelColor = ref("");
 const calendarDate = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 const realtime = getRealtimeSocket();
 let leaveProjectRoom: (() => void) | undefined;
+let dialogRestoreFocus: HTMLElement | null = null;
+
+watch(taskDialogOpen, async (open, wasOpen) => {
+  if (open) {
+    dialogRestoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    await nextTick();
+    const initialFocus =
+      taskDialog.value?.querySelector<HTMLElement>("input:not([type='checkbox']), textarea, select") ??
+      taskDialog.value?.querySelector<HTMLElement>("button");
+    initialFocus?.focus();
+  } else if (wasOpen) {
+    await nextTick();
+    dialogRestoreFocus?.focus();
+    dialogRestoreFocus = null;
+  }
+});
 
 const priorityLabels: Record<TaskPriority, string> = {
   LOW: "Low",
@@ -404,7 +422,11 @@ function priorityClass(priority: TaskPriority): string {
 }
 
 function onDialogKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape" && !submitting.value) taskDialogOpen.value = false;
+  if (event.key === "Escape" && !submitting.value) {
+    taskDialogOpen.value = false;
+    return;
+  }
+  trapFocusWithin(event, taskDialog.value);
 }
 
 function onTaskChanged(event: RealtimeTaskEvent): void {
@@ -639,7 +661,14 @@ onBeforeUnmount(() => {
     </template>
 
     <div v-if="taskDialogOpen" class="task-dialog-backdrop" @click.self="taskDialogOpen = false" @keydown="onDialogKeydown">
-      <section class="task-dialog" role="dialog" aria-modal="true" :aria-label="taskDetail ? 'Edit task' : 'Create task'">
+      <section
+        ref="taskDialog"
+        class="task-dialog"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="taskDetail ? 'Edit task' : 'Create task'"
+        tabindex="-1"
+      >
         <header class="task-dialog-header">
           <div>
             <p class="eyebrow">{{ taskDetail ? "TASK DETAILS" : "NEW TASK" }}</p>

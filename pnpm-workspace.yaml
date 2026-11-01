@@ -3,6 +3,8 @@ packages:
   - packages/*
 overrides:
   webpack: 5.112.2
+  multer: 2.5.0
+  js-yaml: 5.4.1
 allowBuilds:
   '@prisma/engines': true
   '@scarf/scarf': false

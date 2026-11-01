@@ -140,6 +140,11 @@ The Vite development server proxies both `/api` and `/socket.io` to the local AP
 | `corepack pnpm test:realtime` | Test Socket.IO authentication, room access, task and notification events, presence, and session revocation |
 | `corepack pnpm test:tasks` | Test task update service behavior |
 | `corepack pnpm test:analytics` | Test analytics health rules, date windows, and CSV safety |
+| `corepack pnpm test` | Run database-independent task, realtime, and analytics tests |
+| `corepack pnpm test:integration` | Run authenticated API workflows against an isolated PostgreSQL `orbit_test` database |
+| `corepack pnpm test:e2e` | Run Chromium core-flow, keyboard-dialog, and axe WCAG 2.1 AA-oriented checks |
+
+Stage 8 quality check details, isolated local PostgreSQL integration setup, performance measurement outputs, and coverage limits are documented in [QUALITY.md](./QUALITY.md).
 
 ## Workspace layout
 

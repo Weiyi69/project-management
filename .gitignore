@@ -6,6 +6,9 @@ coverage/
 .env.*
 !.env.example
 apps/api/src/generated/
+apps/api/dist-integration/
 prisma/*.db
 *.log
 .DS_Store
+test-results/
+playwright-report/

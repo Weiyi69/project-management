@@ -21,7 +21,7 @@
 
 .eyebrow {
   margin: 0 0 8px;
-  color: #8d96a6;
+  color: var(--muted);
   font-size: 9px;
   font-weight: 690;
   letter-spacing: 0.12em;
@@ -492,7 +492,7 @@
 
 .project-create-heading p {
   margin: 4px 0 0;
-  color: #8791a2;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -599,7 +599,7 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #7d8798;
+  color: var(--muted);
   font-size: 11.5px;
 }
 
@@ -804,7 +804,7 @@ a.project-card:hover,
   align-items: center;
   gap: 7px;
   margin: 0 0 20px;
-  color: #737e90;
+  color: var(--muted);
   font-size: 10.5px;
 }
 
@@ -838,7 +838,7 @@ a.project-card:hover,
 
 .project-aside-copy {
   margin: 8px 0 14px;
-  color: #818b9b;
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.6;
 }
