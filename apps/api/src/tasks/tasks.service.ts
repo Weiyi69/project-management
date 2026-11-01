@@ -1,15 +1,18 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ActivityService } from "../activity/activity.service";
 import { Prisma } from "../generated/prisma/client";
 import type { TaskPriority as TaskPriorityContract } from "@orbit/contracts";
 import type {
   MyTasksResponse,
   ProjectLabelSummary,
   ProjectTasksResponse,
+  TaskFocusResponse,
   TaskCommentSummary,
   TaskDetail,
   TaskSummary,
@@ -21,7 +24,7 @@ import { RealtimeGateway } from "../realtime/realtime.gateway";
 import { WorkspaceAccessService } from "../workspaces/workspace-access.service";
 
 const taskInclude = {
-  status: { select: { id: true, name: true, color: true } },
+  status: { select: { id: true, name: true, color: true, isCompleted: true } },
   assignee: { select: { id: true, name: true, email: true } },
   labels: {
     include: { label: { select: { id: true, name: true, color: true } } },
@@ -59,6 +62,7 @@ export class TasksService {
     private readonly workspaceAccess: WorkspaceAccessService,
     private readonly realtime: RealtimeGateway,
     private readonly notifications: NotificationsService,
+    private readonly activity: ActivityService,
   ) {}
 
   async listProjectTasks(userId: string, projectId: string): Promise<ProjectTasksResponse> {
@@ -108,6 +112,74 @@ export class TasksService {
 
     return {
       tasks: tasks.map((task) => this.toMyTaskSummary(task)),
+    };
+  }
+
+  async getTaskFocus(userId: string, today: string): Promise<TaskFocusResponse> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+      throw new BadRequestException("The dashboard date must use YYYY-MM-DD format.");
+    }
+    const start = new Date(`${today}T00:00:00.000Z`);
+    if (!Number.isFinite(start.getTime()) || start.toISOString().slice(0, 10) !== today) {
+      throw new BadRequestException("The dashboard date is invalid.");
+    }
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    const accessibleTask = {
+      assigneeId: userId,
+      project: { workspace: { members: { some: { userId } } } },
+      NOT: { status: { name: { contains: "cancel", mode: "insensitive" as const } } },
+    };
+    const openTask = { ...accessibleTask, status: { isCompleted: false } };
+    const [openCount, dueTodayCount, overdueCount, records] = await this.prisma.$transaction([
+      this.prisma.task.count({ where: openTask }),
+      this.prisma.task.count({
+        where: { ...openTask, dueDate: { gte: start, lt: end } },
+      }),
+      this.prisma.task.count({
+        where: { ...openTask, dueDate: { lt: start } },
+      }),
+      this.prisma.task.findMany({
+        where: {
+          ...openTask,
+          OR: [{ dueDate: { gte: start } }, { dueDate: null }],
+        },
+        select: {
+          id: true,
+          projectId: true,
+          title: true,
+          priority: true,
+          dueDate: true,
+          status: { select: { name: true } },
+          project: {
+            select: {
+              id: true,
+              name: true,
+              workspace: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: [
+          { dueDate: { sort: "asc", nulls: "last" } },
+          { updatedAt: "desc" },
+        ],
+        take: 8,
+      }),
+    ]);
+
+    return {
+      openCount,
+      dueTodayCount,
+      overdueCount,
+      upcomingTasks: records.map((task) => ({
+        id: task.id,
+        projectId: task.projectId,
+        title: task.title,
+        priority: task.priority,
+        statusName: task.status.name,
+        dueDate: task.dueDate?.toISOString() ?? null,
+        project: { id: task.project.id, name: task.project.name },
+        workspace: task.project.workspace,
+      })),
     };
   }
 
@@ -188,6 +260,26 @@ export class TasksService {
         },
         include: taskInclude,
       });
+      await this.activity.record(transaction, {
+        workspaceId: project.workspaceId,
+        projectId,
+        actorId: userId,
+        entityType: "TASK",
+        entityId: createdTask.id,
+        action: "TASK_CREATED",
+        metadata: { title: createdTask.title },
+      });
+      if (createdTask.assigneeId) {
+        await this.activity.record(transaction, {
+          workspaceId: project.workspaceId,
+          projectId,
+          actorId: userId,
+          entityType: "TASK",
+          entityId: createdTask.id,
+          action: "TASK_ASSIGNED",
+          metadata: { title: createdTask.title },
+        });
+      }
       return {
         task: createdTask,
         notification: await this.notifications.createTaskAssignment(
@@ -272,6 +364,47 @@ export class TasksService {
               savedTask.assigneeId,
             )
           : undefined;
+      if (statusChanged) {
+        await this.activity.record(transaction, {
+          workspaceId: project.workspaceId,
+          projectId: task.projectId,
+          actorId: userId,
+          entityType: "TASK",
+          entityId: taskId,
+          action: savedTask.status.isCompleted ? "TASK_COMPLETED" : "TASK_STATUS_CHANGED",
+          metadata: {
+            title: savedTask.title,
+            from: task.status.name,
+            to: savedTask.status.name,
+          },
+        });
+      }
+      if (input.assigneeId !== undefined && input.assigneeId !== task.assigneeId && savedTask.assigneeId) {
+        await this.activity.record(transaction, {
+          workspaceId: project.workspaceId,
+          projectId: task.projectId,
+          actorId: userId,
+          entityType: "TASK",
+          entityId: taskId,
+          action: "TASK_ASSIGNED",
+          metadata: { title: savedTask.title },
+        });
+      }
+      if (input.priority !== undefined && input.priority !== task.priority) {
+        await this.activity.record(transaction, {
+          workspaceId: project.workspaceId,
+          projectId: task.projectId,
+          actorId: userId,
+          entityType: "TASK",
+          entityId: taskId,
+          action: "TASK_PRIORITY_CHANGED",
+          metadata: {
+            title: savedTask.title,
+            from: task.priority,
+            to: savedTask.priority,
+          },
+        });
+      }
       return { updated: savedTask, notification: assignmentNotification };
     });
 
@@ -298,10 +431,20 @@ export class TasksService {
 
   async createComment(userId: string, taskId: string, body: string): Promise<TaskCommentSummary> {
     const task = await this.requireTask(taskId, userId);
+    const project = await this.requireProject(task.projectId, userId);
     const { comment, notifications } = await this.prisma.$transaction(async (transaction) => {
       const createdComment = await transaction.comment.create({
         data: { taskId, authorId: userId, body: body.trim() },
         include: { author: { select: { id: true, name: true } } },
+      });
+      await this.activity.record(transaction, {
+        workspaceId: project.workspaceId,
+        projectId: task.projectId,
+        actorId: userId,
+        entityType: "TASK",
+        entityId: taskId,
+        action: "TASK_COMMENTED",
+        metadata: { title: task.title },
       });
       return {
         comment: createdComment,

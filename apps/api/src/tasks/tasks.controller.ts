@@ -17,6 +17,7 @@ import {
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import type {
+  TaskFocusResponse,
   MyTasksResponse,
   ProjectLabelSummary,
   ProjectTasksResponse,
@@ -59,6 +60,18 @@ export class TasksController {
     includeCompleted: boolean,
   ): Promise<MyTasksResponse> {
     return this.tasks.listMyTasks(request.user!.id, includeCompleted);
+  }
+
+  @Get("tasks/assigned/focus")
+  @ApiOperation({ summary: "Get task focus counts and upcoming tasks for the signed-in user" })
+  async getTaskFocus(
+    @Req() request: AuthenticatedRequest,
+    @Query("today") today?: string,
+  ): Promise<TaskFocusResponse> {
+    return this.tasks.getTaskFocus(
+      request.user!.id,
+      today ?? new Date().toISOString().slice(0, 10),
+    );
   }
 
   @Post("projects/:projectId/tasks")

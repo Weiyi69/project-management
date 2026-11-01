@@ -96,10 +96,13 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     },
   });
   await response.clone().arrayBuffer();
-  const key = `${method} ${path.replace(
-    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
-    ":id",
-  )}`;
+  const normalizedPath = path
+    .replace(/\/invitations\/preview\/[^/?]+/g, "/invitations/preview/:token")
+    .replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+      ":id",
+    );
+  const key = `${method} ${normalizedPath}`;
   const samples = apiTimings.get(key) ?? [];
   samples.push(performance.now() - startedAt);
   apiTimings.set(key, samples);
@@ -292,6 +295,23 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   assert.equal(createdTaskResponse.status, 201);
   const taskData = (await createdTaskResponse.json()) as { task: { id: string } };
 
+  const firstWorkspaceActivityResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/activity`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(firstWorkspaceActivityResponse.status, 200);
+  const firstWorkspaceActivity = (await firstWorkspaceActivityResponse.json()) as {
+    activities: Array<{ action: string; workspaceId?: string }>;
+  };
+  assert.ok(firstWorkspaceActivity.activities.some(({ action }) => action === "PROJECT_CREATED"));
+  assert.ok(firstWorkspaceActivity.activities.some(({ action }) => action === "TASK_CREATED"));
+  assert.ok(firstWorkspaceActivity.activities.some(({ action }) => action === "TASK_ASSIGNED"));
+  const ownerPendingInvitations = await request("/invitations/pending", {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(ownerPendingInvitations.status, 200);
+  assert.deepEqual((await ownerPendingInvitations.json()).invitations, []);
+
   const secondWorkspaceResponse = await request("/workspaces", {
     method: "POST",
     headers: { cookie: ownerCookie },
@@ -326,6 +346,35 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   });
   assert.equal(secondTaskResponse.status, 201);
   const secondTaskData = (await secondTaskResponse.json()) as { task: { id: string } };
+
+  const focusToday = new Date();
+  const focusTodayKey = focusToday.toISOString().slice(0, 10);
+  const focusTodayStart = new Date(`${focusTodayKey}T00:00:00.000Z`);
+  await prisma.task.update({
+    where: { id: taskData.task.id },
+    data: { dueDate: focusTodayStart },
+  });
+  await prisma.task.update({
+    where: { id: secondTaskData.task.id },
+    data: { dueDate: new Date(focusTodayStart.getTime() - 24 * 60 * 60 * 1000) },
+  });
+  const taskFocusResponse = await request(
+    `/tasks/assigned/focus?today=${focusTodayKey}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(taskFocusResponse.status, 200);
+  const taskFocus = (await taskFocusResponse.json()) as {
+    openCount: number;
+    dueTodayCount: number;
+    overdueCount: number;
+    upcomingTasks: Array<{ id: string; projectId: string; workspace: { id: string } }>;
+  };
+  assert.equal(taskFocus.openCount, 2);
+  assert.equal(taskFocus.dueTodayCount, 1);
+  assert.equal(taskFocus.overdueCount, 1);
+  assert.deepEqual(taskFocus.upcomingTasks.map(({ id }) => id), [taskData.task.id]);
+  assert.equal(taskFocus.upcomingTasks[0]?.projectId, projectId);
+  assert.equal(taskFocus.upcomingTasks[0]?.workspace.id, ownerWorkspace.id);
 
   const myTasksResponse = await request("/tasks/assigned", {
     headers: { cookie: ownerCookie },
@@ -479,6 +528,23 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   assert.equal(outsiderLogin.status, 200);
   const outsiderCookie = cookieFrom(outsiderLogin);
 
+  const outsiderActivity = await request(
+    `/workspaces/${ownerWorkspace.id}/activity`,
+    { headers: { cookie: outsiderCookie } },
+  );
+  assert.equal(outsiderActivity.status, 404);
+  const outsiderInvitations = await request("/invitations/pending", {
+    headers: { cookie: outsiderCookie },
+  });
+  assert.equal(outsiderInvitations.status, 200);
+  assert.deepEqual((await outsiderInvitations.json()).invitations, []);
+  const outsiderFocus = await request(
+    `/tasks/assigned/focus?today=${new Date().toISOString().slice(0, 10)}`,
+    { headers: { cookie: outsiderCookie } },
+  );
+  assert.equal(outsiderFocus.status, 200);
+  assert.equal((await outsiderFocus.json()).openCount, 0);
+
   const outsiderMyTasks = await request("/tasks/assigned", {
     headers: { cookie: outsiderCookie },
   });
@@ -587,6 +653,10 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     },
   );
   assert.equal(invitationResponse.status, 201);
+  const invitationResponseData = (await invitationResponse.json()) as {
+    invitation: { id: string };
+  };
+  const invitationId = invitationResponseData.invitation.id;
   const invitationMessage = takeTestEmails(invitationEmail).find((item) =>
     item.subject.includes("invited"),
   );
@@ -632,6 +702,90 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   });
   assert.equal(inviteeLogin.status, 200);
   const inviteeCookie = cookieFrom(inviteeLogin);
+
+  await prisma.workspaceInvitation.update({
+    where: { id: invitationId },
+    data: { role: "OWNER" },
+  });
+  const invalidManagerInvitationList = await request(
+    `/workspaces/${ownerWorkspace.id}/invitations`,
+    {
+      headers: {
+        cookie: ownerCookie,
+        "x-workspace-id": ownerWorkspace.id,
+      },
+    },
+  );
+  assert.equal(invalidManagerInvitationList.status, 200);
+  assert.deepEqual((await invalidManagerInvitationList.json()).invitations, []);
+  const invalidRecipientInvitationList = await request("/invitations/pending", {
+    headers: { cookie: inviteeCookie },
+  });
+  assert.equal(invalidRecipientInvitationList.status, 200);
+  assert.deepEqual((await invalidRecipientInvitationList.json()).invitations, []);
+  assert.equal(
+    (
+      await request(`/invitations/preview/${encodeURIComponent(invitationToken)}`)
+    ).status,
+    409,
+  );
+  const membershipsBeforeInvalidAccept = await prisma.workspaceMember.count({
+    where: { workspaceId: ownerWorkspace.id, userId: invitedUser.id },
+  });
+  assert.equal(membershipsBeforeInvalidAccept, 0);
+  assert.equal(
+    (
+      await request("/invitations/accept", {
+        method: "POST",
+        headers: { cookie: inviteeCookie },
+        body: JSON.stringify({ token: invitationToken }),
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(`/invitations/${invitationId}/accept`, {
+        method: "POST",
+        headers: { cookie: inviteeCookie },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    await prisma.workspaceMember.count({
+      where: { workspaceId: ownerWorkspace.id, userId: invitedUser.id },
+    }),
+    membershipsBeforeInvalidAccept,
+  );
+  assert.equal(
+    (await prisma.workspace.findUniqueOrThrow({ where: { id: ownerWorkspace.id } })).ownerId,
+    ownerRecord.id,
+  );
+  await prisma.workspaceInvitation.update({
+    where: { id: invitationId },
+    data: { role: "MEMBER" },
+  });
+
+  const pendingInvitationsResponse = await request("/invitations/pending", {
+    headers: { cookie: inviteeCookie },
+  });
+  assert.equal(pendingInvitationsResponse.status, 200);
+  const pendingInvitations = (await pendingInvitationsResponse.json()) as {
+    invitations: Array<{
+      id: string;
+      workspaceId: string;
+      workspaceName: string;
+      inviterName: string;
+    }>;
+  };
+  const recipientInvitation = pendingInvitations.invitations.find(
+    ({ workspaceId }) => workspaceId === ownerWorkspace.id,
+  );
+  assert.ok(recipientInvitation);
+  assert.equal(recipientInvitation.workspaceName, ownerWorkspace.name);
+  assert.equal(recipientInvitation.inviterName, ownerRecord.name);
+  assert.equal("token" in recipientInvitation, false);
   const acceptedInvitation = await request("/invitations/accept", {
     method: "POST",
     headers: { cookie: inviteeCookie },
@@ -642,6 +796,68 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     workspace: { id: string };
   };
   assert.equal(acceptedData.workspace.id, ownerWorkspace.id);
+
+  const secondWorkspaceInvitationResponse = await request(
+    `/workspaces/${secondWorkspaceData.workspace.id}/invitations`,
+    {
+      method: "POST",
+      headers: {
+        cookie: ownerCookie,
+        "x-workspace-id": secondWorkspaceData.workspace.id,
+      },
+      body: JSON.stringify({ email: invitationEmail, role: "MEMBER" }),
+    },
+  );
+  assert.equal(secondWorkspaceInvitationResponse.status, 201);
+  const secondWorkspaceInvitation = (await secondWorkspaceInvitationResponse.json()) as {
+    invitation: { id: string };
+  };
+  const acceptedFromInbox = await request(
+    `/invitations/${secondWorkspaceInvitation.invitation.id}/accept`,
+    { method: "POST", headers: { cookie: inviteeCookie } },
+  );
+  assert.equal(acceptedFromInbox.status, 200);
+  const inboxAcceptedData = (await acceptedFromInbox.json()) as {
+    workspace: { id: string };
+  };
+  assert.equal(inboxAcceptedData.workspace.id, secondWorkspaceData.workspace.id);
+
+  const thirdWorkspaceResponse = await request("/workspaces", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ name: "Quality decline workspace" }),
+  });
+  assert.equal(thirdWorkspaceResponse.status, 201);
+  const thirdWorkspace = (await thirdWorkspaceResponse.json()) as {
+    workspace: { id: string };
+  };
+  createdWorkspaceIds.push(thirdWorkspace.workspace.id);
+  const declineInvitationResponse = await request(
+    `/workspaces/${thirdWorkspace.workspace.id}/invitations`,
+    {
+      method: "POST",
+      headers: {
+        cookie: ownerCookie,
+        "x-workspace-id": thirdWorkspace.workspace.id,
+      },
+      body: JSON.stringify({ email: invitationEmail, role: "MEMBER" }),
+    },
+  );
+  assert.equal(declineInvitationResponse.status, 201);
+  const declineInvitation = (await declineInvitationResponse.json()) as {
+    invitation: { id: string };
+  };
+  const declinedResponse = await request(
+    `/invitations/${declineInvitation.invitation.id}/decline`,
+    { method: "POST", headers: { cookie: inviteeCookie } },
+  );
+  assert.equal(declinedResponse.status, 204);
+  assert.equal(
+    await prisma.workspaceMember.count({
+      where: { workspaceId: thirdWorkspace.workspace.id, userId: invitedUser.id },
+    }),
+    0,
+  );
 
   const resetRequest = await request("/auth/password-reset/request", {
     method: "POST",

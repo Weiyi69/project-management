@@ -108,11 +108,78 @@ test("registers, creates project work, and loads accessible analytics", async ({
   navigationDurations.registration = performance.now() - registrationStartedAt;
 
   const projectsStartedAt = performance.now();
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  const onboardingHeading = page.getByRole("heading", { name: "Welcome to your workspace" });
+  await expect(onboardingHeading).toBeVisible();
+  await expect(page.getByRole("link", { name: "Create your first project" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Invite team members" })).toBeVisible();
+  await assertWcagAa(page);
+
   await page.getByRole("link", { name: "Projects", exact: true }).click();
+  let releaseProjects!: () => void;
+  const heldProjectsResponse = new Promise<void>((resolve) => {
+    releaseProjects = resolve;
+  });
+  await page.route("**/api/v1/projects", async (route) => {
+    await heldProjectsResponse;
+    await route.continue();
+  });
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(page.getByText("Loading your workspace overview")).toBeVisible();
+  await expect(onboardingHeading).toBeHidden();
+  releaseProjects();
+  await expect(onboardingHeading).toBeVisible();
+  await page.unroute("**/api/v1/projects");
+
+  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await page.route("**/api/v1/projects", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Projects are temporarily unavailable." }),
+    }),
+  );
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(page.getByText("Projects are temporarily unavailable.")).toBeVisible();
+  await expect(onboardingHeading).toBeHidden();
+  await page.unroute("**/api/v1/projects");
+
+  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await page.route("**/api/v1/workspaces", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        workspaces: [{
+          id: newWorkspaceId,
+          name: "Quality browser user's workspace",
+          slug: "quality-browser-workspace",
+          role: "MEMBER",
+        }],
+      }),
+    }),
+  );
+  await page.reload();
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(onboardingHeading).toBeVisible();
+  await expect(page.getByRole("link", { name: "Create your first project" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Invite team members" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Browse projects" })).toBeVisible();
+  await page.unroute("**/api/v1/workspaces");
+  await page.reload();
+  await expect(onboardingHeading).toBeVisible();
+
+  await page.getByRole("link", { name: "Create your first project" }).click();
   await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
-  await page.getByRole("button", { name: "New project" }).click();
+  await expect(page.getByLabel("Project name")).toBeVisible();
   await page.getByLabel("Project name").fill(`Quality browser project ${suffix}`);
   await page.getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("heading", { name: "Your projects" })).toBeVisible();
+  await expect(onboardingHeading).toBeHidden();
+  await page
+    .locator(".dashboard-project-list")
+    .getByRole("link", { name: new RegExp(`Quality browser project ${suffix}`) })
+    .click();
   await expect(page.getByRole("heading", { name: /^Tasks \d+$/ })).toBeVisible();
   await expect(page.locator(".project-loading")).toBeHidden();
   navigationDurations.projectCreationAndNavigation = performance.now() - projectsStartedAt;
@@ -143,13 +210,31 @@ test("registers, creates project work, and loads accessible analytics", async ({
   const myTasksStartedAt = performance.now();
   await page.getByRole("link", { name: "My tasks", exact: true }).click();
   await expect(page.getByRole("heading", { name: "My tasks" })).toBeVisible();
-  const myTaskLink = page.getByRole("link", { name: "Verify keyboard task workflow" });
+  const myTaskLink = page
+    .locator(".my-tasks-page")
+    .getByRole("link", { name: "Verify keyboard task workflow" });
   await expect(myTaskLink).toBeVisible();
   navigationDurations.myTasks = performance.now() - myTasksStartedAt;
   await assertWcagAa(page);
   await myTaskLink.click();
   await expect(page).toHaveURL(/\/projects\/[^/]+\?task=/);
   await expect(page.getByRole("dialog", { name: "Edit task" })).toBeVisible();
+  await page.getByRole("button", { name: "Close task dialog" }).click();
+
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "My focus today" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Upcoming tasks" })).toBeVisible();
+  await expect(
+    page
+      .locator(".dashboard-task-list")
+      .getByRole("link", { name: /Verify keyboard task workflow/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible();
+  await expect(page.getByText("No pending invitations")).toBeVisible();
+  await assertWcagAa(page);
+
+  await page.getByRole("link", { name: "Create task" }).click();
+  await expect(page.getByRole("dialog", { name: "Create task" })).toBeVisible();
   await page.getByRole("button", { name: "Close task dialog" }).click();
 
   const analyticsStartedAt = performance.now();
@@ -167,7 +252,9 @@ test("registers, creates project work, and loads accessible analytics", async ({
       Object.entries(navigationDurations).map(([name, value]) => [name, Math.round(value * 100) / 100]),
     ),
     initialNavigation: await page.evaluate(() => {
-      const entry = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+      const entry = window.performance.getEntriesByType("navigation")[0] as
+        | PerformanceNavigationTiming
+        | undefined;
       return entry ? {
         domContentLoadedMs: Math.round(entry.domContentLoadedEventEnd * 100) / 100,
         loadEventMs: Math.round(entry.loadEventEnd * 100) / 100,

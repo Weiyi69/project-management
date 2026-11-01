@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ActivityModule } from "../activity/activity.module";
 import { AuthModule } from "../auth/auth.module";
 import { EmailModule } from "../email/email.module";
 import { PrismaModule } from "../prisma/prisma.module";
@@ -8,7 +9,7 @@ import { WorkspacesController } from "./workspaces.controller";
 import { WorkspacesService } from "./workspaces.service";
 
 @Module({
-  imports: [AuthModule, EmailModule, PrismaModule, RealtimeModule],
+  imports: [ActivityModule, AuthModule, EmailModule, PrismaModule, RealtimeModule],
   controllers: [WorkspacesController],
   providers: [WorkspaceAccessService, WorkspacesService],
   exports: [WorkspaceAccessService],

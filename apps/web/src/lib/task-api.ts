@@ -1,9 +1,11 @@
 import type {
+  DashboardTaskSummary,
   MyTasksResponse,
   ProjectLabelSummary,
   ProjectTasksResponse,
   TaskCommentSummary,
   TaskDetail,
+  TaskFocusResponse,
   TaskPriority,
   TaskResponse,
   TaskSummary,
@@ -271,10 +273,65 @@ function parseMyTasks(value: unknown): MyTasksResponse {
   };
 }
 
+function parseTaskFocus(value: unknown): TaskFocusResponse {
+  if (
+    !isRecord(value) ||
+    typeof value.openCount !== "number" ||
+    typeof value.dueTodayCount !== "number" ||
+    typeof value.overdueCount !== "number" ||
+    !Array.isArray(value.upcomingTasks)
+  ) {
+    throw new Error("The tasks API returned invalid focus data.");
+  }
+
+  const upcomingTasks = value.upcomingTasks.map((item): DashboardTaskSummary => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== "string" ||
+      typeof item.projectId !== "string" ||
+      typeof item.title !== "string" ||
+      !["LOW", "MEDIUM", "HIGH", "URGENT"].includes(String(item.priority)) ||
+      typeof item.statusName !== "string" ||
+      !(typeof item.dueDate === "string" || item.dueDate === null) ||
+      !isRecord(item.project) ||
+      typeof item.project.id !== "string" ||
+      typeof item.project.name !== "string" ||
+      !isRecord(item.workspace) ||
+      typeof item.workspace.id !== "string" ||
+      typeof item.workspace.name !== "string"
+    ) {
+      throw new Error("The tasks API returned an invalid upcoming task.");
+    }
+
+    return {
+      id: item.id,
+      projectId: item.projectId,
+      title: item.title,
+      priority: item.priority as TaskPriority,
+      statusName: item.statusName,
+      dueDate: item.dueDate,
+      project: { id: item.project.id, name: item.project.name },
+      workspace: { id: item.workspace.id, name: item.workspace.name },
+    };
+  });
+
+  return {
+    openCount: value.openCount,
+    dueTodayCount: value.dueTodayCount,
+    overdueCount: value.overdueCount,
+    upcomingTasks,
+  };
+}
+
 export const taskApi = {
   async listMyTasks(includeCompleted = false): Promise<MyTasksResponse> {
     const query = includeCompleted ? "?includeCompleted=true" : "";
     return parseMyTasks(await request(`/tasks/assigned${query}`));
+  },
+  async focus(today: string): Promise<TaskFocusResponse> {
+    return parseTaskFocus(
+      await request(`/tasks/assigned/focus?today=${encodeURIComponent(today)}`),
+    );
   },
   async list(projectId: string): Promise<ProjectTasksResponse> {
     return parseProjectTasks(

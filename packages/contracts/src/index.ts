@@ -149,6 +149,44 @@ export interface MyTasksResponse {
   tasks: MyTaskSummary[];
 }
 
+export interface DashboardTaskSummary {
+  id: string;
+  projectId: string;
+  title: string;
+  priority: TaskPriority;
+  statusName: string;
+  dueDate: string | null;
+  project: { id: string; name: string };
+  workspace: { id: string; name: string };
+}
+
+export interface TaskFocusResponse {
+  openCount: number;
+  dueTodayCount: number;
+  overdueCount: number;
+  upcomingTasks: DashboardTaskSummary[];
+}
+
+export interface WorkspaceActivitySummary {
+  id: string;
+  actorName: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  entityName: string;
+  project: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+export interface PendingWorkspaceInvitation {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  inviterName: string;
+  role: "ADMIN" | "MEMBER";
+  expiresAt: string;
+}
+
 export interface RealtimeTaskEvent {
   projectId: string;
   taskId: string | null;
@@ -284,7 +322,7 @@ export interface WorkspaceMemberSummary {
 export interface InvitationSummary {
   id: string;
   email: string;
-  role: "ADMIN" | "MEMBER" | "OWNER";
+  role: "ADMIN" | "MEMBER";
   inviterName: string;
   expiresAt: string;
   acceptedAt: string | null;

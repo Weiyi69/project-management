@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import {
   ArrowRight,
   FolderKanban,
@@ -14,6 +14,7 @@ import { projectApi } from "../lib/project-api";
 import { useWorkspaceStore } from "../stores/workspaces";
 
 const router = useRouter();
+const route = useRoute();
 const workspaces = useWorkspaceStore();
 const projects = ref<ProjectSummary[]>([]);
 const loading = ref(true);
@@ -54,7 +55,15 @@ async function createProject(): Promise<void> {
       name: projectName.value,
       description: projectDescription.value,
     });
-    await router.push({ name: "project-detail", params: { projectId: project.id } });
+    if (route.query.onboarding === "1") {
+      await router.push({ name: "overview" });
+      return;
+    }
+    await router.push({
+      name: "project-detail",
+      params: { projectId: project.id },
+      ...(route.query.createTask === "1" ? { query: { createTask: "1" } } : {}),
+    });
   } catch (caught) {
     error.value =
       caught instanceof Error ? caught.message : "Could not create the project. Please try again.";
@@ -69,6 +78,16 @@ watch(
   () => {
     if (workspaces.initialized) void loadProjects();
   },
+);
+watch(
+  () => [route.query.create, workspaces.canManage] as const,
+  ([requested]) => {
+    if (requested === "true" && workspaces.canManage) {
+      createOpen.value = true;
+      void router.replace({ query: { ...route.query, create: undefined } });
+    }
+  },
+  { immediate: true },
 );
 </script>
 

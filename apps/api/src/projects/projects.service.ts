@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ActivityService } from "../activity/activity.service";
 import type {
   ProjectSummary,
   ProjectLifecycle as ProjectLifecycleContract,
@@ -17,6 +18,7 @@ export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceAccess: WorkspaceAccessService,
+    private readonly activity: ActivityService,
   ) {}
 
   async listProjects(userId: string, workspaceId?: string): Promise<ProjectSummary[]> {
@@ -71,36 +73,57 @@ export class ProjectsService {
       throw new ForbiddenException("Workspace owner or admin permission is required to create projects.");
     }
 
-    const project = await this.prisma.project.create({
-      data: {
-        workspaceId: membership.workspaceId,
-        name: input.name.trim(),
-        description: input.description?.trim() || null,
-        createdBy: userId,
-        members: { create: { userId, projectRole: "ADMIN" } },
-        statuses: {
-          create: [
-            { name: "To do", color: "#94A3B8", position: 0, isDefault: true },
-            { name: "In progress", color: "#6366F1", position: 1 },
-            { name: "Done", color: "#22C55E", position: 2, isCompleted: true },
-          ],
-        },
-      },
-      include: {
-        workspace: {
-          select: {
-            id: true,
-            name: true,
-            members: { where: { userId }, select: { role: true } },
+    const project = await this.prisma.$transaction(async (transaction) => {
+      const created = await transaction.project.create({
+        data: {
+          workspaceId: membership.workspaceId,
+          name: input.name.trim(),
+          description: input.description?.trim() || null,
+          createdBy: userId,
+          members: { create: { userId, projectRole: "ADMIN" } },
+          statuses: {
+            create: [
+              { name: "To do", color: "#94A3B8", position: 0, isDefault: true },
+              { name: "In progress", color: "#6366F1", position: 1 },
+              { name: "Done", color: "#22C55E", position: 2, isCompleted: true },
+            ],
           },
         },
-        members: { where: { userId }, select: { projectRole: true } },
-        statuses: {
-          select: { id: true, name: true, color: true, position: true },
-          orderBy: { position: "asc" },
+        include: {
+          workspace: {
+            select: {
+              id: true,
+              name: true,
+              members: { where: { userId }, select: { role: true } },
+            },
+          },
+          members: { where: { userId }, select: { projectRole: true } },
+          statuses: {
+            select: { id: true, name: true, color: true, position: true },
+            orderBy: { position: "asc" },
+          },
+          _count: { select: { tasks: true } },
         },
-        _count: { select: { tasks: true } },
-      },
+      });
+      await this.activity.record(transaction, {
+        workspaceId: membership.workspaceId,
+        projectId: created.id,
+        actorId: userId,
+        entityType: "PROJECT",
+        entityId: created.id,
+        action: "PROJECT_CREATED",
+        metadata: { name: created.name },
+      });
+      await this.activity.record(transaction, {
+        workspaceId: membership.workspaceId,
+        projectId: created.id,
+        actorId: userId,
+        entityType: "MEMBERSHIP",
+        entityId: userId,
+        action: "PROJECT_MEMBER_ADDED",
+        metadata: { name: created.name },
+      });
+      return created;
     });
 
     return this.toSummary(project);
@@ -150,37 +173,62 @@ export class ProjectsService {
         id: projectId,
         workspace: { members: { some: { userId } } },
       },
-      select: { id: true, workspaceId: true },
+      select: { id: true, workspaceId: true, name: true, description: true, state: true },
     });
     if (!accessibleProject) {
       throw new NotFoundException("Project not found.");
     }
     await this.requireProjectManager(userId, projectId, accessibleProject.workspaceId);
 
-    const project = await this.prisma.project.update({
-      where: { id: projectId },
-      data: {
-        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-        ...(input.description !== undefined
-          ? { description: input.description?.trim() || null }
-          : {}),
-        ...(input.state !== undefined ? { state: ProjectLifecycle[input.state] } : {}),
-      },
-      include: {
-        workspace: {
-          select: {
-            id: true,
-            name: true,
-            members: { where: { userId }, select: { role: true } },
+    const project = await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.project.update({
+        where: { id: projectId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.description !== undefined
+            ? { description: input.description?.trim() || null }
+            : {}),
+          ...(input.state !== undefined ? { state: ProjectLifecycle[input.state] } : {}),
+        },
+        include: {
+          workspace: {
+            select: {
+              id: true,
+              name: true,
+              members: { where: { userId }, select: { role: true } },
+            },
           },
+          members: { where: { userId }, select: { projectRole: true } },
+          statuses: {
+            select: { id: true, name: true, color: true, position: true },
+            orderBy: { position: "asc" },
+          },
+          _count: { select: { tasks: true } },
         },
-        members: { where: { userId }, select: { projectRole: true } },
-        statuses: {
-          select: { id: true, name: true, color: true, position: true },
-          orderBy: { position: "asc" },
-        },
-        _count: { select: { tasks: true } },
-      },
+      });
+      const changedFields = [
+        ...(input.name !== undefined && input.name.trim() !== accessibleProject.name ? ["name"] : []),
+        ...(input.description !== undefined &&
+        (input.description?.trim() || null) !== accessibleProject.description
+          ? ["description"]
+          : []),
+        ...(input.state !== undefined &&
+        ProjectLifecycle[input.state] !== accessibleProject.state
+          ? ["state"]
+          : []),
+      ];
+      if (changedFields.length) {
+        await this.activity.record(transaction, {
+          workspaceId: accessibleProject.workspaceId,
+          projectId,
+          actorId: userId,
+          entityType: "PROJECT",
+          entityId: projectId,
+          action: "PROJECT_UPDATED",
+          metadata: { name: updated.name, changedFields },
+        });
+      }
+      return updated;
     });
 
     return this.toSummary(project);

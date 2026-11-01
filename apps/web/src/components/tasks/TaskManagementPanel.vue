@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   ArrowRight,
   CalendarDays,
@@ -34,6 +34,7 @@ import { trapFocusWithin } from "../../lib/dialog-accessibility";
 
 const props = defineProps<{ project: ProjectSummary }>();
 const route = useRoute();
+const router = useRouter();
 
 type ViewMode = "kanban" | "table" | "calendar";
 interface TaskDraft {
@@ -185,6 +186,16 @@ watch(
   () => route.query.task,
   (taskId) => {
     if (typeof taskId === "string") void openTaskById(taskId);
+  },
+  { immediate: true },
+);
+watch(
+  () => route.query.createTask,
+  (requested) => {
+    if (requested === "1") {
+      openCreate();
+      void router.replace({ query: { ...route.query, createTask: undefined } });
+    }
   },
   { immediate: true },
 );

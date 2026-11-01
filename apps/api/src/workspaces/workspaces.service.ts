@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -9,9 +10,11 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import type {
   InvitationSummary,
+  PendingWorkspaceInvitation,
   WorkspaceMemberSummary,
   WorkspaceSummary,
 } from "@orbit/contracts";
+import { ActivityService } from "../activity/activity.service";
 import { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeGateway } from "../realtime/realtime.gateway";
@@ -33,6 +36,7 @@ export class WorkspacesService {
     private readonly access: WorkspaceAccessService,
     private readonly email: EmailService,
     private readonly realtime: RealtimeGateway,
+    private readonly activity: ActivityService,
   ) {}
 
   async list(userId: string): Promise<WorkspaceSummary[]> {
@@ -145,11 +149,40 @@ export class WorkspacesService {
     if (actor.role !== "OWNER" && (role === "ADMIN" || target.role === "ADMIN")) {
       throw new ForbiddenException("Only the workspace owner can manage admin roles.");
     }
+    if (target.role === role) {
+      const current = await this.prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      });
+      if (!current) throw new NotFoundException("Workspace member not found.");
+      return {
+        userId: current.user.id,
+        name: current.user.name,
+        email: current.user.email,
+        role: current.role,
+        joinedAt: current.joinedAt.toISOString(),
+      };
+    }
 
-    const updated = await this.prisma.workspaceMember.update({
-      where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
-      data: { role },
-      include: { user: { select: { id: true, name: true, email: true } } },
+    const updated = await this.prisma.$transaction(async (transaction) => {
+      const membership = await transaction.workspaceMember.update({
+        where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+        data: { role },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      });
+      await this.activity.record(transaction, {
+        workspaceId,
+        actorId,
+        entityType: "MEMBERSHIP",
+        entityId: targetUserId,
+        action: "WORKSPACE_MEMBER_ROLE_CHANGED",
+        metadata: {
+          memberName: membership.user.name,
+          fromRole: target.role,
+          toRole: role,
+        },
+      });
+      return membership;
     });
 
     return {
@@ -171,8 +204,22 @@ export class WorkspacesService {
       throw new ForbiddenException("Only the workspace owner can remove another admin.");
     }
 
-    await this.prisma.workspaceMember.delete({
-      where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+    await this.prisma.$transaction(async (transaction) => {
+      const target = await transaction.user.findUniqueOrThrow({
+        where: { id: targetUserId },
+        select: { name: true },
+      });
+      await transaction.workspaceMember.delete({
+        where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+      });
+      await this.activity.record(transaction, {
+        workspaceId,
+        actorId,
+        entityType: "MEMBERSHIP",
+        entityId: targetUserId,
+        action: "WORKSPACE_MEMBER_REMOVED",
+        metadata: { memberName: target.name },
+      });
     });
     await this.realtime.revokeWorkspaceAccess(workspaceId, targetUserId);
   }
@@ -188,7 +235,7 @@ export class WorkspacesService {
       include: { inviter: { select: { name: true } } },
     });
 
-    return invitations.map((invitation) => ({
+    return this.filterSupportedInvitations(invitations).map((invitation) => ({
       id: invitation.id,
       email: invitation.email,
       role: invitation.role,
@@ -223,6 +270,10 @@ export class WorkspacesService {
     const actor = await this.access.requireWorkspaceManager(workspaceId, actorId);
     if (input.role === "ADMIN" && actor.role !== "OWNER") {
       throw new ForbiddenException("Only the workspace owner can invite an admin.");
+    }
+    if (!isSupportedInvitationRole(input.role)) {
+      this.logger.warn("Rejected workspace invitation creation with an unsupported role.");
+      throw new BadRequestException("Workspace invitations support only admin or member roles.");
     }
 
     const email = input.email.trim().toLowerCase();
@@ -274,6 +325,7 @@ export class WorkspacesService {
           acceptedAt: null,
         },
       });
+      this.assertSupportedInvitationRole(invitation.role);
     } catch (error) {
       if (error instanceof ConflictException) {
         throw error;
@@ -344,9 +396,7 @@ export class WorkspacesService {
     if (!invitation || invitation.expiresAt <= new Date()) {
       throw new NotFoundException("This invitation is invalid or has expired.");
     }
-    if (invitation.role === "OWNER") {
-      throw new ConflictException("Workspace owners cannot be assigned by invitation.");
-    }
+    this.assertSupportedInvitationRole(invitation.role);
 
     return {
       email: invitation.email,
@@ -365,6 +415,14 @@ export class WorkspacesService {
     if (!invitation || invitation.expiresAt <= new Date()) {
       throw new NotFoundException("This invitation is invalid or has expired.");
     }
+    this.assertSupportedInvitationRole(invitation.role);
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.emailVerifiedAt) {
+      throw new ForbiddenException("Verify your email address before accepting an invitation.");
+    }
+    if (normalizeEmail(user.email) !== normalizeEmail(invitation.email)) {
+      throw new ForbiddenException(`Sign in with ${invitation.email} to accept this invitation.`);
+    }
     if (invitation.acceptedAt) {
       const existingMembership = await this.prisma.workspaceMember.findUnique({
         where: { workspaceId_userId: { workspaceId: invitation.workspaceId, userId } },
@@ -380,19 +438,18 @@ export class WorkspacesService {
       throw new ConflictException("This invitation has already been accepted.");
     }
 
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    if (user.email.toLowerCase() !== invitation.email.toLowerCase()) {
-      throw new ForbiddenException(`Sign in with ${invitation.email} to accept this invitation.`);
-    }
-    if (invitation.role === "OWNER") {
-      throw new ConflictException("Workspace owners cannot be assigned by invitation.");
-    }
-
     const membership = await this.prisma.$transaction(async (transaction) => {
-      const currentInvitation = await transaction.workspaceInvitation.findUnique({
-        where: { id: invitation.id },
+      const claimed = await transaction.workspaceInvitation.updateMany({
+        where: {
+          id: invitation.id,
+          tokenHash: hashInvitationToken(token),
+          role: invitation.role,
+          acceptedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        data: { acceptedAt: new Date() },
       });
-      if (!currentInvitation || currentInvitation.acceptedAt || currentInvitation.expiresAt <= new Date()) {
+      if (claimed.count !== 1) {
         throw new ConflictException("This invitation is no longer available.");
       }
 
@@ -407,10 +464,13 @@ export class WorkspacesService {
         },
         update: {},
       });
-
-      await transaction.workspaceInvitation.update({
-        where: { id: invitation.id },
-        data: { acceptedAt: new Date() },
+      await this.activity.record(transaction, {
+        workspaceId: invitation.workspaceId,
+        actorId: userId,
+        entityType: "MEMBERSHIP",
+        entityId: userId,
+        action: "WORKSPACE_MEMBER_JOINED",
+        metadata: { memberName: user.name, role: joined.role },
       });
 
       return joined;
@@ -424,7 +484,159 @@ export class WorkspacesService {
     };
   }
 
+  async listPendingInvitations(userId: string): Promise<PendingWorkspaceInvitation[]> {
+    const user = await this.requireVerifiedUser(userId);
+    const invitations = await this.prisma.workspaceInvitation.findMany({
+      where: {
+        email: normalizeEmail(user.email),
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: {
+        workspace: { select: { id: true, name: true } },
+        inviter: { select: { name: true } },
+      },
+      orderBy: [{ expiresAt: "asc" }, { createdAt: "desc" }],
+    });
+
+    return this.filterSupportedInvitations(invitations).map((invitation) => ({
+      id: invitation.id,
+      workspaceId: invitation.workspace.id,
+      workspaceName: invitation.workspace.name,
+      inviterName: invitation.inviter.name,
+      role: invitation.role,
+      expiresAt: invitation.expiresAt.toISOString(),
+    }));
+  }
+
+  async acceptPendingInvitation(userId: string, invitationId: string): Promise<WorkspaceSummary> {
+    const user = await this.requireVerifiedUser(userId);
+    const email = normalizeEmail(user.email);
+    const invitation = await this.prisma.workspaceInvitation.findFirst({
+      where: { id: invitationId, email, acceptedAt: null, expiresAt: { gt: new Date() } },
+      include: { workspace: true },
+    });
+    if (!invitation) {
+      throw new NotFoundException("Invitation not found or no longer available.");
+    }
+    this.assertSupportedInvitationRole(invitation.role);
+
+    const membership = await this.prisma.$transaction(async (transaction) => {
+      const claimed = await transaction.workspaceInvitation.updateMany({
+        where: {
+          id: invitation.id,
+          email,
+          role: invitation.role,
+          acceptedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        data: { acceptedAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException("This invitation is no longer available.");
+      }
+
+      const joined = await transaction.workspaceMember.upsert({
+        where: {
+          workspaceId_userId: { workspaceId: invitation.workspaceId, userId },
+        },
+        create: {
+          workspaceId: invitation.workspaceId,
+          userId,
+          role: invitation.role,
+        },
+        update: {},
+      });
+      await this.activity.record(transaction, {
+        workspaceId: invitation.workspaceId,
+        actorId: userId,
+        entityType: "MEMBERSHIP",
+        entityId: userId,
+        action: "WORKSPACE_MEMBER_JOINED",
+        metadata: { memberName: user.name, role: joined.role },
+      });
+      return joined;
+    });
+
+    return {
+      id: invitation.workspace.id,
+      name: invitation.workspace.name,
+      slug: invitation.workspace.slug,
+      role: membership.role,
+    };
+  }
+
+  async declinePendingInvitation(userId: string, invitationId: string): Promise<void> {
+    const user = await this.requireVerifiedUser(userId);
+    const email = normalizeEmail(user.email);
+    const invitation = await this.prisma.workspaceInvitation.findFirst({
+      where: {
+        id: invitationId,
+        email,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: { role: true },
+    });
+    if (!invitation) {
+      throw new NotFoundException("Invitation not found or no longer available.");
+    }
+    this.assertSupportedInvitationRole(invitation.role);
+
+    const result = await this.prisma.workspaceInvitation.deleteMany({
+      where: {
+        id: invitationId,
+        email,
+        role: invitation.role,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (result.count !== 1) {
+      throw new NotFoundException("Invitation not found or no longer available.");
+    }
+  }
+
+  private filterSupportedInvitations<T extends { role: string }>(
+    invitations: T[],
+  ): Array<T & { role: "ADMIN" | "MEMBER" }> {
+    const supported = invitations.filter(
+      (invitation): invitation is T & { role: "ADMIN" | "MEMBER" } =>
+        isSupportedInvitationRole(invitation.role),
+    );
+    if (supported.length !== invitations.length) {
+      this.logger.warn("Filtered workspace invitations with unsupported roles.");
+    }
+    return supported;
+  }
+
+  private assertSupportedInvitationRole(role: string): asserts role is "ADMIN" | "MEMBER" {
+    if (isSupportedInvitationRole(role)) return;
+    this.logger.warn("Rejected workspace invitation with an unsupported role.");
+    throw new ConflictException("This invitation is invalid or unavailable.");
+  }
+
+  private async requireVerifiedUser(userId: string): Promise<{ email: string; name: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, name: true, emailVerifiedAt: true },
+    });
+    if (!user) throw new NotFoundException("User not found.");
+    if (!user.emailVerifiedAt) {
+      throw new ForbiddenException("Verify your email address to manage invitations.");
+    }
+    return { email: user.email, name: user.name };
+  }
+
   private slugify(value: string): string {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "workspace";
   }
+}
+
+function isSupportedInvitationRole(role: string): role is "ADMIN" | "MEMBER" {
+  return role === "ADMIN" || role === "MEMBER";
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }

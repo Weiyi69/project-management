@@ -5,6 +5,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { RealtimeGateway } from "../realtime/realtime.gateway";
 import type { NotificationsService } from "../notifications/notifications.service";
 import type { WorkspaceAccessService } from "../workspaces/workspace-access.service";
+import type { ActivityService } from "../activity/activity.service";
 import { TasksService } from "./tasks.service";
 
 const userId = "15442c08-e919-4a81-ac54-e5d7b42102dd";
@@ -13,6 +14,7 @@ const projectId = "61b77378-0a0a-44de-8b78-774f7601892d";
 const statusId = "b307e0d1-1339-4103-8e13-75606bb256d8";
 const taskId = "fc14b956-eead-442d-afa0-7f8a4c266abb";
 const now = new Date("2026-10-31T00:00:00.000Z");
+const activity = { record: async () => undefined } as unknown as ActivityService;
 
 test("updates a task status through the Prisma status relation", async () => {
   const task = {
@@ -72,7 +74,7 @@ test("updates a task status through the Prisma status relation", async () => {
   const workspaceAccess = {
     requireMembership: async () => ({ workspaceId, userId, role: "OWNER" as const }),
   } as unknown as WorkspaceAccessService;
-  const service = new TasksService(prisma, workspaceAccess, realtime, notifications);
+  const service = new TasksService(prisma, workspaceAccess, realtime, notifications, activity);
 
   const updated = await service.updateTask(userId, taskId, {
     statusId,
@@ -128,6 +130,7 @@ test("lists the signed-in user's tasks from accessible workspaces and hides comp
     {} as WorkspaceAccessService,
     {} as RealtimeGateway,
     {} as NotificationsService,
+    activity,
   );
 
   const response = await service.listMyTasks(userId);
@@ -182,9 +185,106 @@ test("includes completed tasks only when requested", async () => {
     {} as WorkspaceAccessService,
     {} as RealtimeGateway,
     {} as NotificationsService,
+    activity,
   );
 
   const response = await service.listMyTasks(userId, true);
 
   assert.deepEqual(response, { tasks: [] });
+});
+
+test("aggregates only open assigned tasks across the user's current workspace memberships", async () => {
+  const upcoming = {
+    id: taskId,
+    projectId,
+    title: "Review project plan",
+    priority: "HIGH",
+    dueDate: new Date("2026-11-02T00:00:00.000Z"),
+    status: { name: "To do" },
+    project: {
+      id: projectId,
+      name: "Test project",
+      workspace: { id: workspaceId, name: "Test workspace" },
+    },
+  };
+  const countQueries: Array<Record<string, unknown>> = [];
+  let taskQuery: Record<string, unknown> | undefined;
+  const prisma = {
+    task: {
+      count: async (args: { where: Record<string, unknown> }) => {
+        countQueries.push(args.where);
+        return [7, 2, 1][countQueries.length - 1] ?? 0;
+      },
+      findMany: async (args: Record<string, unknown>) => {
+        taskQuery = args;
+        return [upcoming];
+      },
+    },
+    $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+  } as unknown as PrismaService;
+  const service = new TasksService(
+    prisma,
+    {} as WorkspaceAccessService,
+    {} as RealtimeGateway,
+    {} as NotificationsService,
+    activity,
+  );
+
+  const response = await service.getTaskFocus(userId, "2026-10-31");
+
+  assert.deepEqual(response, {
+    openCount: 7,
+    dueTodayCount: 2,
+    overdueCount: 1,
+    upcomingTasks: [
+      {
+        id: taskId,
+        projectId,
+        title: "Review project plan",
+        priority: "HIGH",
+        statusName: "To do",
+        dueDate: "2026-11-02T00:00:00.000Z",
+        project: { id: projectId, name: "Test project" },
+        workspace: { id: workspaceId, name: "Test workspace" },
+      },
+    ],
+  });
+  assert.equal(countQueries.length, 3);
+  for (const where of countQueries) {
+    assert.equal(where.assigneeId, userId);
+    assert.deepEqual(where.project, { workspace: { members: { some: { userId } } } });
+    assert.deepEqual(where.status, { isCompleted: false });
+    assert.deepEqual(where.NOT, {
+      status: { name: { contains: "cancel", mode: "insensitive" } },
+    });
+  }
+  assert.deepEqual(countQueries[1]?.dueDate, {
+    gte: new Date("2026-10-31T00:00:00.000Z"),
+    lt: new Date("2026-11-01T00:00:00.000Z"),
+  });
+  assert.deepEqual(countQueries[2]?.dueDate, {
+    lt: new Date("2026-10-31T00:00:00.000Z"),
+  });
+  assert.deepEqual(taskQuery?.where, {
+    assigneeId: userId,
+    project: { workspace: { members: { some: { userId } } } },
+    NOT: { status: { name: { contains: "cancel", mode: "insensitive" } } },
+    status: { isCompleted: false },
+    OR: [
+      { dueDate: { gte: new Date("2026-10-31T00:00:00.000Z") } },
+      { dueDate: null },
+    ],
+  });
+});
+
+test("rejects malformed dashboard dates", async () => {
+  const service = new TasksService(
+    {} as PrismaService,
+    {} as WorkspaceAccessService,
+    {} as RealtimeGateway,
+    {} as NotificationsService,
+    activity,
+  );
+
+  await assert.rejects(service.getTaskFocus(userId, "not-a-date"), /YYYY-MM-DD/);
 });

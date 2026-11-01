@@ -15,6 +15,7 @@ import {
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import type {
   InvitationSummary,
+  PendingWorkspaceInvitation,
   WorkspaceMemberSummary,
   WorkspaceSummary,
 } from "@orbit/contracts";
@@ -51,6 +52,39 @@ export class WorkspacesController {
     @Body() input: AcceptInvitationDto,
   ): Promise<{ workspace: WorkspaceSummary }> {
     return { workspace: await this.workspaces.acceptInvitation(request.user!.id, input.token) };
+  }
+
+  @Get("invitations/pending")
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: "List invitations addressed to the signed-in verified email" })
+  async listPendingInvitations(
+    @Req() request: AuthenticatedRequest,
+  ): Promise<{ invitations: PendingWorkspaceInvitation[] }> {
+    return { invitations: await this.workspaces.listPendingInvitations(request.user!.id) };
+  }
+
+  @Post("invitations/:invitationId/accept")
+  @UseGuards(AuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Accept a pending invitation addressed to the signed-in email" })
+  async acceptPendingInvitation(
+    @Req() request: AuthenticatedRequest,
+    @Param("invitationId", new ParseUUIDPipe()) invitationId: string,
+  ): Promise<{ workspace: WorkspaceSummary }> {
+    return {
+      workspace: await this.workspaces.acceptPendingInvitation(request.user!.id, invitationId),
+    };
+  }
+
+  @Post("invitations/:invitationId/decline")
+  @UseGuards(AuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: "Decline a pending invitation addressed to the signed-in email" })
+  async declinePendingInvitation(
+    @Req() request: AuthenticatedRequest,
+    @Param("invitationId", new ParseUUIDPipe()) invitationId: string,
+  ): Promise<void> {
+    await this.workspaces.declinePendingInvitation(request.user!.id, invitationId);
   }
 
   @Get("workspaces")

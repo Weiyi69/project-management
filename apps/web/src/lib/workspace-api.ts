@@ -1,6 +1,7 @@
 import type {
   InvitationPreview,
   InvitationSummary,
+  PendingWorkspaceInvitation,
   WorkspaceMemberSummary,
   WorkspaceSummary,
 } from "@orbit/contracts";
@@ -95,7 +96,7 @@ function invitation(value: unknown): InvitationSummary {
   if (
     typeof data.id !== "string" ||
     typeof data.email !== "string" ||
-    (data.role !== "OWNER" && data.role !== "ADMIN" && data.role !== "MEMBER") ||
+    (data.role !== "ADMIN" && data.role !== "MEMBER") ||
     typeof data.inviterName !== "string" ||
     typeof data.expiresAt !== "string" ||
     !(typeof data.acceptedAt === "string" || data.acceptedAt === null) ||
@@ -111,6 +112,28 @@ function invitation(value: unknown): InvitationSummary {
     expiresAt: data.expiresAt,
     acceptedAt: data.acceptedAt,
     expired: data.expired,
+  };
+}
+
+function pendingInvitation(value: unknown): PendingWorkspaceInvitation {
+  const data = object(value);
+  if (
+    typeof data.id !== "string" ||
+    typeof data.workspaceId !== "string" ||
+    typeof data.workspaceName !== "string" ||
+    typeof data.inviterName !== "string" ||
+    (data.role !== "ADMIN" && data.role !== "MEMBER") ||
+    typeof data.expiresAt !== "string"
+  ) {
+    throw new Error("The workspace API returned an invalid pending invitation.");
+  }
+  return {
+    id: data.id,
+    workspaceId: data.workspaceId,
+    workspaceName: data.workspaceName,
+    inviterName: data.inviterName,
+    role: data.role,
+    expiresAt: data.expiresAt,
   };
 }
 
@@ -201,5 +224,23 @@ export const workspaceApi = {
       method: "POST",
       body: JSON.stringify({ token }),
     }), "workspace"));
+  },
+  async pendingInvitations(): Promise<PendingWorkspaceInvitation[]> {
+    const data = object(await request("/invitations/pending"));
+    if (!Array.isArray(data.invitations)) {
+      throw new Error("The workspace API returned an invalid pending invitation list.");
+    }
+    return data.invitations.map(pendingInvitation);
+  },
+  async acceptPendingInvitation(invitationId: string): Promise<WorkspaceSummary> {
+    return workspace(recordField(await request(
+      `/invitations/${encodeURIComponent(invitationId)}/accept`,
+      { method: "POST" },
+    ), "workspace"));
+  },
+  async declinePendingInvitation(invitationId: string): Promise<void> {
+    await request(`/invitations/${encodeURIComponent(invitationId)}/decline`, {
+      method: "POST",
+    });
   },
 };
