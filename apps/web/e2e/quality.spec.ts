@@ -150,6 +150,7 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await myTaskLink.click();
   await expect(page).toHaveURL(/\/projects\/[^/]+\?task=/);
   await expect(page.getByRole("dialog", { name: "Edit task" })).toBeVisible();
+  await page.getByRole("button", { name: "Close task dialog" }).click();
 
   const analyticsStartedAt = performance.now();
   await page.getByRole("link", { name: "Analytics", exact: true }).click();
