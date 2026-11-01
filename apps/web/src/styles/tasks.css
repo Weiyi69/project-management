@@ -820,6 +820,116 @@
   resize: vertical;
 }
 
+.my-tasks-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+.my-tasks-heading h1 {
+  margin: 0;
+  color: #202a3d;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.05em;
+}
+
+.my-tasks-heading .eyebrow {
+  margin-bottom: 7px;
+}
+
+.my-tasks-heading .page-subtitle {
+  margin: 7px 0 0;
+}
+
+.my-tasks-completed-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: #536075;
+  cursor: pointer;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.my-tasks-completed-toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
+.my-tasks-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.my-tasks-table {
+  min-width: 760px;
+}
+
+.my-tasks-table a.task-table-title {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.my-task-status,
+.my-task-due-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.my-task-status .project-status-dot {
+  flex: 0 0 auto;
+}
+
+.my-task-due-date {
+  color: #647084;
+}
+
+.my-tasks-empty {
+  display: grid;
+  justify-items: center;
+  padding: 64px 22px;
+  border: 1px dashed #dfe2e9;
+  border-radius: 11px;
+  background: #fff;
+  text-align: center;
+}
+
+.my-tasks-empty .eyebrow {
+  margin: 0 0 8px;
+  color: #7d86a0;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+}
+
+.my-tasks-empty h2 {
+  margin: 0;
+  color: #30394c;
+  font-size: 17px;
+  font-weight: 630;
+}
+
+.my-tasks-empty p:not(.eyebrow) {
+  max-width: 420px;
+  margin: 8px 0 16px;
+  color: #8490a2;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
 @media (max-width: 680px) {
   .task-workspace-heading {
     align-items: flex-start;
@@ -849,5 +959,29 @@
 
   .task-dialog-actions {
     flex-wrap: wrap;
+  }
+
+  .my-tasks-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 13px;
+    margin-bottom: 17px;
+  }
+
+  .my-tasks-heading h1 {
+    font-size: 26px;
+  }
+
+  .my-tasks-completed-toggle {
+    min-height: 35px;
+  }
+
+  .my-tasks-error {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .my-tasks-empty {
+    padding: 45px 17px;
   }
 }

@@ -6,6 +6,7 @@ import AcceptInvitationView from "../views/AcceptInvitationView.vue";
 import AnalyticsProjectView from "../views/AnalyticsProjectView.vue";
 import AnalyticsView from "../views/AnalyticsView.vue";
 import NotificationInboxView from "../views/NotificationInboxView.vue";
+import MyTasksView from "../views/MyTasksView.vue";
 import ProjectDetailView from "../views/ProjectDetailView.vue";
 import ProjectsView from "../views/ProjectsView.vue";
 import SectionPlaceholder from "../views/SectionPlaceholder.vue";
@@ -29,7 +30,7 @@ export const router = createRouter({
         {
           path: "my-tasks",
           name: "my-tasks",
-          component: SectionPlaceholder,
+          component: MyTasksView,
           meta: {
             title: "My tasks",
             description: "Your assigned work, gathered in one place.",

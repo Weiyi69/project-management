@@ -285,11 +285,95 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     body: JSON.stringify({
       title: "Verify persisted workflow",
       statusId: todoStatus.id,
+      assigneeId: ownerRecord.id,
       dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
     }),
   });
   assert.equal(createdTaskResponse.status, 201);
   const taskData = (await createdTaskResponse.json()) as { task: { id: string } };
+
+  const secondWorkspaceResponse = await request("/workspaces", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ name: "Quality second workspace" }),
+  });
+  assert.equal(secondWorkspaceResponse.status, 201);
+  const secondWorkspaceData = (await secondWorkspaceResponse.json()) as {
+    workspace: { id: string; name: string };
+  };
+  createdWorkspaceIds.push(secondWorkspaceData.workspace.id);
+  const secondProjectResponse = await request("/projects", {
+    method: "POST",
+    headers: { cookie: ownerCookie, "x-workspace-id": secondWorkspaceData.workspace.id },
+    body: JSON.stringify({ name: "Quality second workspace project" }),
+  });
+  assert.equal(secondProjectResponse.status, 201);
+  const secondProjectData = (await secondProjectResponse.json()) as {
+    project: { id: string; statuses: Array<{ id: string; name: string }> };
+  };
+  const secondTodoStatus = secondProjectData.project.statuses.find(
+    (status) => status.name === "To do",
+  );
+  assert.ok(secondTodoStatus);
+  const secondTaskResponse = await request(`/projects/${secondProjectData.project.id}/tasks`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({
+      title: "Review second workspace plan",
+      statusId: secondTodoStatus.id,
+      assigneeId: ownerRecord.id,
+    }),
+  });
+  assert.equal(secondTaskResponse.status, 201);
+  const secondTaskData = (await secondTaskResponse.json()) as { task: { id: string } };
+
+  const myTasksResponse = await request("/tasks/assigned", {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(myTasksResponse.status, 200);
+  const myTasksData = (await myTasksResponse.json()) as {
+    tasks: Array<{
+      id: string;
+      project: { id: string; workspace: { id: string; name: string } };
+      statusIsCompleted: boolean;
+    }>;
+  };
+  assert.deepEqual(
+    myTasksData.tasks.map((task) => task.id).sort(),
+    [taskData.task.id, secondTaskData.task.id].sort(),
+  );
+  assert.ok(myTasksData.tasks.every((task) => task.statusIsCompleted === false));
+  assert.ok(myTasksData.tasks.some(
+    (task) => task.project.workspace.id === secondWorkspaceData.workspace.id,
+  ));
+
+  const completeTaskResponse = await request(`/tasks/${taskData.task.id}`, {
+    method: "PATCH",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ statusId: doneStatus.id }),
+  });
+  assert.equal(completeTaskResponse.status, 200);
+  const openTasksResponse = await request("/tasks/assigned", {
+    headers: { cookie: ownerCookie },
+  });
+  const openTasksData = (await openTasksResponse.json()) as { tasks: Array<{ id: string }> };
+  assert.ok(openTasksData.tasks.every((task) => task.id !== taskData.task.id));
+  const allTasksResponse = await request("/tasks/assigned?includeCompleted=true", {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(allTasksResponse.status, 200);
+  const allTasksData = (await allTasksResponse.json()) as {
+    tasks: Array<{ id: string; statusIsCompleted: boolean }>;
+  };
+  assert.ok(allTasksData.tasks.some(
+    (task) => task.id === taskData.task.id && task.statusIsCompleted,
+  ));
+  const reopenTaskResponse = await request(`/tasks/${taskData.task.id}`, {
+    method: "PATCH",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ statusId: todoStatus.id }),
+  });
+  assert.equal(reopenTaskResponse.status, 200);
 
   const performanceCookieHeaders = { cookie: ownerCookie };
   const projectListHeaders = {
@@ -394,6 +478,12 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   });
   assert.equal(outsiderLogin.status, 200);
   const outsiderCookie = cookieFrom(outsiderLogin);
+
+  const outsiderMyTasks = await request("/tasks/assigned", {
+    headers: { cookie: outsiderCookie },
+  });
+  assert.equal(outsiderMyTasks.status, 200);
+  assert.deepEqual((await outsiderMyTasks.json()) as { tasks: unknown[] }, { tasks: [] });
 
   const outsiderWorkspaceAnalytics = await request(
     `/analytics/workspaces/${ownerData.user.workspaceId}`,

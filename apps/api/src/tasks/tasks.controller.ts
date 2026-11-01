@@ -1,19 +1,23 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseBoolPipe,
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import type {
+  MyTasksResponse,
   ProjectLabelSummary,
   ProjectTasksResponse,
   TaskCommentSummary,
@@ -45,6 +49,16 @@ export class TasksController {
     @Param("projectId", new ParseUUIDPipe()) projectId: string,
   ): Promise<ProjectTasksResponse> {
     return this.tasks.listProjectTasks(request.user!.id, projectId);
+  }
+
+  @Get("tasks/assigned")
+  @ApiOperation({ summary: "List tasks assigned to the signed-in user across workspaces" })
+  async listMyTasks(
+    @Req() request: AuthenticatedRequest,
+    @Query("includeCompleted", new DefaultValuePipe(false), ParseBoolPipe)
+    includeCompleted: boolean,
+  ): Promise<MyTasksResponse> {
+    return this.tasks.listMyTasks(request.user!.id, includeCompleted);
   }
 
   @Post("projects/:projectId/tasks")

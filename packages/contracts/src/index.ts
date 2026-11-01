@@ -136,6 +136,19 @@ export interface ProjectTasksResponse {
   labels: ProjectLabelSummary[];
 }
 
+export interface MyTaskSummary extends TaskSummary {
+  statusIsCompleted: boolean;
+  project: {
+    id: string;
+    name: string;
+    workspace: Pick<WorkspaceSummary, "id" | "name">;
+  };
+}
+
+export interface MyTasksResponse {
+  tasks: MyTaskSummary[];
+}
+
 export interface RealtimeTaskEvent {
   projectId: string;
   taskId: string | null;

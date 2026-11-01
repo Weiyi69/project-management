@@ -7,6 +7,7 @@ import {
 import { Prisma } from "../generated/prisma/client";
 import type { TaskPriority as TaskPriorityContract } from "@orbit/contracts";
 import type {
+  MyTasksResponse,
   ProjectLabelSummary,
   ProjectTasksResponse,
   TaskCommentSummary,
@@ -36,6 +37,20 @@ const taskInclude = {
 } satisfies Prisma.TaskInclude;
 
 type IncludedTask = Prisma.TaskGetPayload<{ include: typeof taskInclude }>;
+
+const assignedTaskInclude = {
+  ...taskInclude,
+  status: { select: { id: true, name: true, color: true, isCompleted: true } },
+  project: {
+    select: {
+      id: true,
+      name: true,
+      workspace: { select: { id: true, name: true } },
+    },
+  },
+} satisfies Prisma.TaskInclude;
+
+type IncludedAssignedTask = Prisma.TaskGetPayload<{ include: typeof assignedTaskInclude }>;
 
 @Injectable()
 export class TasksService {
@@ -77,6 +92,22 @@ export class TasksService {
           taskCount: label._count.tasks,
         }),
       ),
+    };
+  }
+
+  async listMyTasks(userId: string, includeCompleted = false): Promise<MyTasksResponse> {
+    const tasks = await this.prisma.task.findMany({
+      where: {
+        assigneeId: userId,
+        project: { workspace: { members: { some: { userId } } } },
+        ...(!includeCompleted ? { status: { isCompleted: false } } : {}),
+      },
+      include: assignedTaskInclude,
+      orderBy: [{ dueDate: "asc" }, { updatedAt: "desc" }],
+    });
+
+    return {
+      tasks: tasks.map((task) => this.toMyTaskSummary(task)),
     };
   }
 
@@ -582,6 +613,14 @@ export class TasksService {
         statusName: dependsOn.status.name,
       })),
       commentCount: task._count.comments,
+    };
+  }
+
+  private toMyTaskSummary(task: IncludedAssignedTask): MyTasksResponse["tasks"][number] {
+    return {
+      ...this.toSummary(task),
+      statusIsCompleted: task.status.isCompleted,
+      project: task.project,
     };
   }
 

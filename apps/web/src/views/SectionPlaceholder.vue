@@ -11,9 +11,6 @@ const description = computed(() =>
   typeof route.meta.description === "string" ? route.meta.description : "",
 );
 const previewCopy = computed(() => {
-  if (route.name === "my-tasks") {
-    return "Create, assign, and update tasks inside each project. A cross-project My tasks view is not connected yet.";
-  }
   if (route.name === "calendar") {
     return "Calendar view is available in a project's Tasks section. A workspace-wide calendar is not connected yet.";
   }

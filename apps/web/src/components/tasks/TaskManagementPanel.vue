@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import {
   ArrowRight,
   CalendarDays,
@@ -32,6 +33,7 @@ import { getRealtimeSocket, joinProjectRoom } from "../../lib/realtime";
 import { trapFocusWithin } from "../../lib/dialog-accessibility";
 
 const props = defineProps<{ project: ProjectSummary }>();
+const route = useRoute();
 
 type ViewMode = "kanban" | "table" | "calendar";
 interface TaskDraft {
@@ -155,11 +157,15 @@ function openCreate(): void {
   taskDialogOpen.value = true;
 }
 
-async function openTask(task: TaskSummary): Promise<void> {
+async function openTaskById(taskId: string): Promise<void> {
   error.value = "";
   submitting.value = true;
   try {
-    taskDetail.value = await taskApi.get(task.id);
+    const task = await taskApi.get(taskId);
+    if (task.projectId !== props.project.id) {
+      throw new Error("This task does not belong to the current project.");
+    }
+    taskDetail.value = task;
     setDraft(taskDetail.value);
     commentDraft.value = "";
     dependencyId.value = "";
@@ -170,6 +176,18 @@ async function openTask(task: TaskSummary): Promise<void> {
     submitting.value = false;
   }
 }
+
+async function openTask(task: TaskSummary): Promise<void> {
+  await openTaskById(task.id);
+}
+
+watch(
+  () => route.query.task,
+  (taskId) => {
+    if (typeof taskId === "string") void openTaskById(taskId);
+  },
+  { immediate: true },
+);
 
 async function saveTask(): Promise<void> {
   submitting.value = true;

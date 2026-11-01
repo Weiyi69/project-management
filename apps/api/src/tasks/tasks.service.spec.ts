@@ -86,3 +86,105 @@ test("updates a task status through the Prisma status relation", async () => {
   assert.equal(updateData?.statusId, undefined);
   assert.equal(updated.version, 2);
 });
+
+test("lists the signed-in user's tasks from accessible workspaces and hides completed tasks by default", async () => {
+  const task = {
+    id: taskId,
+    projectId,
+    title: "Review project plan",
+    description: null,
+    statusId,
+    priority: "MEDIUM",
+    assigneeId: userId,
+    reporterId: userId,
+    startDate: null,
+    dueDate: null,
+    position: 0,
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    status: { id: statusId, name: "To do", color: "#94A3B8", isCompleted: false },
+    assignee: { id: userId, name: "Test User", email: "test@example.invalid" },
+    labels: [],
+    dependencies: [],
+    _count: { comments: 0 },
+    project: {
+      id: projectId,
+      name: "Test project",
+      workspace: { id: workspaceId, name: "Test workspace" },
+    },
+  };
+  let query: unknown;
+  const prisma = {
+    task: {
+      findMany: async (args: unknown) => {
+        query = args;
+        return [task];
+      },
+    },
+  } as unknown as PrismaService;
+  const service = new TasksService(
+    prisma,
+    {} as WorkspaceAccessService,
+    {} as RealtimeGateway,
+    {} as NotificationsService,
+  );
+
+  const response = await service.listMyTasks(userId);
+
+  assert.deepEqual(query, {
+    where: {
+      assigneeId: userId,
+      project: { workspace: { members: { some: { userId } } } },
+      status: { isCompleted: false },
+    },
+    include: {
+      status: { select: { id: true, name: true, color: true, isCompleted: true } },
+      assignee: { select: { id: true, name: true, email: true } },
+      labels: { include: { label: { select: { id: true, name: true, color: true } } } },
+      dependencies: {
+        include: {
+          dependsOn: {
+            select: { id: true, title: true, status: { select: { name: true } } },
+          },
+        },
+      },
+      _count: { select: { comments: { where: { deletedAt: null } } } },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          workspace: { select: { id: true, name: true } },
+        },
+      },
+    },
+    orderBy: [{ dueDate: "asc" }, { updatedAt: "desc" }],
+  });
+  assert.equal(response.tasks.length, 1);
+  assert.equal(response.tasks[0]?.id, taskId);
+  assert.equal(response.tasks[0]?.statusIsCompleted, false);
+  assert.deepEqual(response.tasks[0]?.project, task.project);
+});
+
+test("includes completed tasks only when requested", async () => {
+  const prisma = {
+    task: {
+      findMany: async (args: unknown) => {
+        const query = args as { where: Record<string, unknown> };
+        assert.equal(query.where.assigneeId, userId);
+        assert.equal("status" in query.where, false);
+        return [];
+      },
+    },
+  } as unknown as PrismaService;
+  const service = new TasksService(
+    prisma,
+    {} as WorkspaceAccessService,
+    {} as RealtimeGateway,
+    {} as NotificationsService,
+  );
+
+  const response = await service.listMyTasks(userId, true);
+
+  assert.deepEqual(response, { tasks: [] });
+});

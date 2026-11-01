@@ -1,4 +1,5 @@
 import type {
+  MyTasksResponse,
   ProjectLabelSummary,
   ProjectTasksResponse,
   TaskCommentSummary,
@@ -231,7 +232,50 @@ function parseProjectTasks(value: unknown): ProjectTasksResponse {
   };
 }
 
+function parseMyTasks(value: unknown): MyTasksResponse {
+  if (!isRecord(value) || !Array.isArray(value.tasks)) {
+    throw new Error("The tasks API returned an invalid assigned task list.");
+  }
+
+  return {
+    tasks: value.tasks.map((item) => {
+      if (
+        !isRecord(item) ||
+        typeof item.statusIsCompleted !== "boolean" ||
+        !isRecord(item.project) ||
+        typeof item.project.id !== "string" ||
+        typeof item.project.name !== "string" ||
+        !isRecord(item.project.workspace) ||
+        typeof item.project.workspace.id !== "string" ||
+        typeof item.project.workspace.name !== "string"
+      ) {
+        throw new Error("The tasks API returned invalid assigned task metadata.");
+      }
+      const task = parseTask(item);
+      if (item.project.id !== task.projectId) {
+        throw new Error("The tasks API returned a task with inconsistent project metadata.");
+      }
+      return {
+        ...task,
+        statusIsCompleted: item.statusIsCompleted,
+        project: {
+          id: item.project.id,
+          name: item.project.name,
+          workspace: {
+            id: item.project.workspace.id,
+            name: item.project.workspace.name,
+          },
+        },
+      };
+    }),
+  };
+}
+
 export const taskApi = {
+  async listMyTasks(includeCompleted = false): Promise<MyTasksResponse> {
+    const query = includeCompleted ? "?includeCompleted=true" : "";
+    return parseMyTasks(await request(`/tasks/assigned${query}`));
+  },
   async list(projectId: string): Promise<ProjectTasksResponse> {
     return parseProjectTasks(
       await request(`/projects/${encodeURIComponent(projectId)}/tasks`),

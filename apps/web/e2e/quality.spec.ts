@@ -134,10 +134,22 @@ test("registers, creates project work, and loads accessible analytics", async ({
 
   await addTaskButton.click();
   await taskDialog.getByLabel("Title").fill("Verify keyboard task workflow");
+  await taskDialog.getByLabel("Assignee").selectOption({ index: 1 });
   const taskStartedAt = performance.now();
   await taskDialog.getByRole("button", { name: "Create task" }).click();
   await expect(page.getByText("Verify keyboard task workflow", { exact: true })).toBeVisible();
   navigationDurations.taskCreation = performance.now() - taskStartedAt;
+
+  const myTasksStartedAt = performance.now();
+  await page.getByRole("link", { name: "My tasks", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "My tasks" })).toBeVisible();
+  const myTaskLink = page.getByRole("link", { name: "Verify keyboard task workflow" });
+  await expect(myTaskLink).toBeVisible();
+  navigationDurations.myTasks = performance.now() - myTasksStartedAt;
+  await assertWcagAa(page);
+  await myTaskLink.click();
+  await expect(page).toHaveURL(/\/projects\/[^/]+\?task=/);
+  await expect(page.getByRole("dialog", { name: "Edit task" })).toBeVisible();
 
   const analyticsStartedAt = performance.now();
   await page.getByRole("link", { name: "Analytics", exact: true }).click();
