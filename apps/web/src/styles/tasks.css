@@ -333,7 +333,7 @@
 
 .task-priority--medium {
   background: #f2f3f6;
-  color: #687386;
+  color: #606b7b;
 }
 
 .task-priority--high {
@@ -368,7 +368,7 @@
   padding: 11px 12px;
   border-bottom: 1px solid var(--border);
   background: #fafbfc;
-  color: #8791a2;
+  color: #667085;
   font-size: 8.5px;
   font-weight: 650;
   letter-spacing: 0.045em;
