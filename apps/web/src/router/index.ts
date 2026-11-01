@@ -3,6 +3,8 @@ import { useAuthStore } from "../stores/auth";
 import AppShell from "../components/layout/AppShell.vue";
 import AuthView from "../views/AuthView.vue";
 import AcceptInvitationView from "../views/AcceptInvitationView.vue";
+import AnalyticsProjectView from "../views/AnalyticsProjectView.vue";
+import AnalyticsView from "../views/AnalyticsView.vue";
 import NotificationInboxView from "../views/NotificationInboxView.vue";
 import ProjectDetailView from "../views/ProjectDetailView.vue";
 import ProjectsView from "../views/ProjectsView.vue";
@@ -71,11 +73,17 @@ export const router = createRouter({
         {
           path: "analytics",
           name: "analytics",
-          component: SectionPlaceholder,
+          component: AnalyticsView,
           meta: {
             title: "Analytics",
             description: "Understand progress and the health of your projects.",
           },
+        },
+        {
+          path: "analytics/projects/:projectId",
+          name: "analytics-project",
+          component: AnalyticsProjectView,
+          meta: { title: "Project analytics" },
         },
         {
           path: "settings",

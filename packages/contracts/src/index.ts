@@ -177,6 +177,77 @@ export interface NotificationsResponse {
   unreadCount: number;
 }
 
+export type ProjectHealthStatus = "ON_TRACK" | "NEEDS_ATTENTION" | "AT_RISK";
+
+export interface ProjectHealth {
+  status: ProjectHealthStatus;
+  reasons: string[];
+  taskCount: number;
+  completedTasks: number;
+  completionRate: number | null;
+  overdueTasks: number;
+  dueSoonTasks: number;
+  unassignedTasks: number;
+}
+
+export interface AnalyticsProjectSummary {
+  id: string;
+  name: string;
+  state: ProjectLifecycle;
+  health: ProjectHealth;
+}
+
+export interface AnalyticsWorkloadMember {
+  memberId: string;
+  name: string;
+  assignedOpenTasks: number;
+}
+
+export interface AnalyticsWorkspaceResponse {
+  workspace: Pick<WorkspaceSummary, "id" | "name">;
+  generatedAt: string;
+  summary: {
+    totalProjects: number;
+    activeProjects: number;
+    completedProjects: number;
+    totalTasks: number;
+    completedTasks: number;
+    completionRate: number | null;
+    overdueTasks: number;
+    dueSoonTasks: number;
+    unassignedTasks: number;
+  };
+  projects: AnalyticsProjectSummary[];
+  workload: AnalyticsWorkloadMember[];
+  unassignedOpenTasks: number;
+}
+
+export interface AnalyticsStatusMetric {
+  statusId: string;
+  name: string;
+  color: string;
+  isComplete: boolean;
+  taskCount: number;
+}
+
+export interface AnalyticsDueTask {
+  id: string;
+  title: string;
+  dueDate: string;
+  statusName: string;
+  assigneeName: string | null;
+}
+
+export interface AnalyticsProjectResponse {
+  workspace: Pick<WorkspaceSummary, "id" | "name">;
+  project: AnalyticsProjectSummary;
+  generatedAt: string;
+  statuses: AnalyticsStatusMetric[];
+  workload: AnalyticsWorkloadMember[];
+  dueTasks: AnalyticsDueTask[];
+  dueTasksLimited: boolean;
+}
+
 export interface TaskResponse {
   task: TaskDetail;
 }

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AnalyticsModule } from "./analytics/analytics.module";
 import { AuthModule } from "./auth/auth.module";
 import { HealthController } from "./health.controller";
 import { NotificationsModule } from "./notifications/notifications.module";
@@ -8,7 +9,15 @@ import { TasksModule } from "./tasks/tasks.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
 
 @Module({
-  imports: [AuthModule, ProjectsModule, TasksModule, WorkspacesModule, RealtimeModule, NotificationsModule],
+  imports: [
+    AuthModule,
+    ProjectsModule,
+    TasksModule,
+    WorkspacesModule,
+    RealtimeModule,
+    NotificationsModule,
+    AnalyticsModule,
+  ],
   controllers: [HealthController],
 })
 export class AppModule {}

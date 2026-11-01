@@ -98,10 +98,19 @@ const selectedWorkspace = computed(
         v-for="item in mainNavigation"
         :key="item.name"
         class="nav-link"
-        :class="{ 'nav-link--active': route.name === item.name }"
+        :class="{
+          'nav-link--active':
+            route.name === item.name ||
+            (item.name === 'analytics' && route.name === 'analytics-project'),
+        }"
         :to="{ name: item.name }"
         :title="collapsed ? item.label : undefined"
-        :aria-current="route.name === item.name ? 'page' : undefined"
+        :aria-current="
+          route.name === item.name ||
+          (item.name === 'analytics' && route.name === 'analytics-project')
+            ? 'page'
+            : undefined
+        "
         @click="emit('navigate')"
       >
         <component :is="item.icon" :size="18" :stroke-width="1.8" />

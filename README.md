@@ -1,6 +1,6 @@
 # ORBIT
 
-ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–6 are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, project task planning, and Socket.IO-based task synchronization, presence, and in-app notifications.
+ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–7 are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, project task planning, Socket.IO-based task synchronization, presence and in-app notifications, plus workspace and project analytics with CSV exports.
 
 Local development targets Windows 10/11 with PostgreSQL installed natively and managed through pgAdmin 4. Docker Desktop is not required.
 
@@ -101,6 +101,11 @@ The Projects section lists projects in the selected workspace. Create a project 
 
 Project task management provides Kanban, table, and monthly calendar views. Workspace members can create, edit, assign, move, and delete tasks; add/edit/delete comments they authored; manage project labels; and link task dependencies. Assignees must belong to the same workspace. Dependencies are restricted to the same project and cycles are rejected. Calendar entries use task due dates. The task endpoints require a valid session and workspace membership:
 
+Analytics provides a workspace dashboard and project drill-down based on persisted project, workflow-status, assignment, and due-date data. Project health is explainable: any overdue incomplete task makes a project At risk; otherwise, no tasks, an incomplete task due today through the seventh day after today (UTC calendar days), or unassigned incomplete work makes it Needs attention; projects without those signals are On track. Completion is completed tasks divided by all tasks; an empty project has no completion rate. Team workload counts assigned incomplete tasks and reports unassigned work separately. The dashboard and project detail views export CSV. The project detail view shows up to 100 due tasks; its CSV export includes all overdue and upcoming incomplete tasks. CSV cells are escaped and formula-prefixed values are neutralized for spreadsheet safety. Analytics endpoints require authentication and workspace membership:
+
+- `GET /api/v1/analytics/workspaces/:workspaceId` and `GET /api/v1/analytics/projects/:projectId`
+- `GET /api/v1/analytics/workspaces/:workspaceId/export.csv` and `GET /api/v1/analytics/projects/:projectId/export.csv`
+
 - `GET /api/v1/workspaces` and `GET /api/v1/workspaces/current`
 - `POST /api/v1/workspaces`, `GET /api/v1/workspaces/:workspaceId`, `PATCH` and `DELETE /api/v1/workspaces/:workspaceId`
 - `GET /api/v1/workspaces/:workspaceId/members`; `PATCH` and `DELETE /api/v1/workspaces/:workspaceId/members/:userId`
@@ -116,7 +121,7 @@ Project task management provides Kanban, table, and monthly calendar views. Work
 
 Role permissions: workspace owners can rename/delete their empty workspace, grant/revoke admin roles, invite admins or members, and manage projects. Workspace admins can invite/manage members and manage projects, but cannot rename/delete workspaces or grant/administer other admins. Members can view workspace projects and project details, but cannot create or edit projects. Owners cannot be removed or demoted. Invitations cannot grant the owner role.
 
-The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. Task boards, table/calendar views, task creation and assignment, comments, labels, dependencies, and workspace invitations are connected. Authenticated Socket.IO sessions use the existing HTTP-only session cookie. Members may join only project rooms for workspaces they currently belong to; task and comment changes are broadcast to those rooms, and project presence is ephemeral on the single API instance. Removing a workspace member also removes their active sockets from that workspace's project rooms. In-app notifications are persisted for task assignments and comments; comments can mention workspace members with their email address (for example `@person@example.com`). The notification menu and Inbox page support unread counts and read state across connected sessions. Multi-instance deployments need a shared Socket.IO adapter for cross-instance rooms and presence. Due-date reminders and analytics are not implemented. Password-reset is intentionally unavailable until an email-delivery provider is configured; the page explains that no email is sent.
+The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. Task boards, table/calendar views, task creation and assignment, comments, labels, dependencies, workspace invitations, and Stage 7 analytics are connected. Authenticated Socket.IO sessions use the existing HTTP-only session cookie. Members may join only project rooms for workspaces they currently belong to; task and comment changes are broadcast to those rooms, and project presence is ephemeral on the single API instance. Removing a workspace member also removes their active sockets from that workspace's project rooms. In-app notifications are persisted for task assignments and comments; comments can mention workspace members with their email address (for example `@person@example.com`). The notification menu and Inbox page support unread counts and read state across connected sessions. Multi-instance deployments need a shared Socket.IO adapter for cross-instance rooms and presence. Due-date reminders are not implemented. Password-reset is intentionally unavailable until an email-delivery provider is configured; the page explains that no email is sent.
 
 The Vite development server proxies both `/api` and `/socket.io` to the local API. A production deployment must route the same paths (including WebSocket upgrades for `/socket.io`) to the API service.
 
@@ -134,6 +139,7 @@ The Vite development server proxies both `/api` and `/socket.io` to the local AP
 | `corepack pnpm build` | Build all workspace packages |
 | `corepack pnpm test:realtime` | Test Socket.IO authentication, room access, task and notification events, presence, and session revocation |
 | `corepack pnpm test:tasks` | Test task update service behavior |
+| `corepack pnpm test:analytics` | Test analytics health rules, date windows, and CSV safety |
 
 ## Workspace layout
 
@@ -152,4 +158,4 @@ prisma/
 
 ## Scope and next stages
 
-Stages 1–6 establish the technical foundation, frontend experience, local account authentication, workspace/project management, task workflows, and real-time task collaboration. Analytics, project-specific member management, password reset, due-date reminder scheduling, comprehensive feature tests beyond focused realtime coverage, and deployment are not implemented yet. Remaining preview screens are not database-backed product workflows. This local-development implementation is not production-ready without additional operational hardening.
+Stages 1–7 establish the technical foundation, frontend experience, local account authentication, workspace/project management, task workflows, real-time task collaboration, and workspace/project analytics. Project-specific member management, password reset, due-date reminder scheduling, comprehensive feature tests beyond focused coverage, and deployment are not implemented yet. Remaining preview screens are not database-backed product workflows. This local-development implementation is not production-ready without additional operational hardening.
