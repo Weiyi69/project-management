@@ -26,7 +26,7 @@ function getErrorMessage(body: unknown): string | undefined {
   return undefined;
 }
 
-function parseAuthResponse(value: unknown): AuthResponse {
+function parseAuthenticatedResponse(value: unknown): AuthResponse {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -58,6 +58,13 @@ function parseAuthResponse(value: unknown): AuthResponse {
   };
 }
 
+function objectResponse(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("The authentication API returned an invalid response.");
+  }
+  return value as Record<string, unknown>;
+}
+
 async function request(path: string, init?: RequestInit): Promise<unknown> {
   let response: Response;
   try {
@@ -86,23 +93,70 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
 
 export const authApi = {
   async register(input: { name: string; email: string; password: string }) {
-    return parseAuthResponse(
+    const body = objectResponse(
       await request("/auth/register", {
         method: "POST",
         body: JSON.stringify(input),
       }),
     );
+    if (
+      typeof body.email !== "string" ||
+      body.verificationRequired !== true ||
+      typeof body.resendCooldownSeconds !== "number"
+    ) {
+      throw new Error("The authentication API returned an invalid registration response.");
+    }
+    return {
+      email: body.email,
+      verificationRequired: true as const,
+      resendCooldownSeconds: body.resendCooldownSeconds,
+    };
   },
   async login(input: { email: string; password: string }) {
-    return parseAuthResponse(
+    return parseAuthenticatedResponse(
       await request("/auth/login", {
         method: "POST",
         body: JSON.stringify(input),
       }),
     );
   },
+  async verifyEmail(input: { email: string; code: string }) {
+    const body = objectResponse(
+      await request("/auth/verify-email", { method: "POST", body: JSON.stringify(input) }),
+    );
+    if (body.verified !== true) throw new Error("The verification response was invalid.");
+  },
+  async resendVerification(email: string) {
+    const body = objectResponse(
+      await request("/auth/resend-verification", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      }),
+    );
+    if (typeof body.resendCooldownSeconds !== "number") {
+      throw new Error("The authentication API returned an invalid resend response.");
+    }
+    return { resendCooldownSeconds: body.resendCooldownSeconds };
+  },
+  async requestPasswordReset(email: string) {
+    return objectResponse(
+      await request("/auth/password-reset/request", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      }),
+    );
+  },
+  async resetPassword(input: { email: string; code: string; newPassword: string }) {
+    const body = objectResponse(
+      await request("/auth/password-reset/confirm", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
+    if (body.reset !== true) throw new Error("The password reset response was invalid.");
+  },
   async currentUser() {
-    return parseAuthResponse(await request("/auth/me"));
+    return parseAuthenticatedResponse(await request("/auth/me"));
   },
   async logout() {
     await request("/auth/logout", { method: "POST" });

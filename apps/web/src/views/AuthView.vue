@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { ArrowLeft, ArrowRight, Eye, EyeOff } from "@lucide/vue";
+import { AuthApiError, authApi } from "../lib/auth-api";
 import { useAuthStore } from "../stores/auth";
 
-type AuthMode = "login" | "register" | "forgot-password";
+type AuthMode = "login" | "register" | "verify-email" | "forgot-password" | "reset-password";
 
 const route = useRoute();
 const router = useRouter();
@@ -13,16 +14,34 @@ const mode = computed(() => route.name as AuthMode);
 const fullName = ref("");
 const email = ref("");
 const password = ref("");
+const code = ref("");
 const showPassword = ref(false);
 const message = ref("");
 const submitting = ref(false);
+const unverifiedAccount = ref(false);
+const resendCooldown = ref(0);
+let cooldownTimer: ReturnType<typeof setInterval> | undefined;
+
+const redirectTarget = computed(() => {
+  const redirect = route.query.redirect;
+  return typeof redirect === "string" && redirect.startsWith("/") && !redirect.startsWith("//")
+    ? redirect
+    : undefined;
+});
+
 const visibleMessage = computed(
   () =>
     message.value ||
     auth.error ||
-    (route.query.reason === "api-unavailable"
-      ? "Could not connect to the API. Start the API server, then try again."
-      : ""),
+    (route.query.verified === "true"
+      ? "Email verified successfully. You can now sign in."
+      : route.query.reset === "true"
+        ? "Your password was reset. Sign in with your new password."
+        : route.query.registered === "true"
+          ? "If this email needs verification, check your inbox or request another code after the cooldown. If it is already verified, return to sign in."
+        : route.query.reason === "api-unavailable"
+          ? "Could not connect to the API. Start the API server, then try again."
+          : ""),
 );
 
 const copy = computed(() => {
@@ -35,13 +54,31 @@ const copy = computed(() => {
       button: "Create account",
     };
   }
+  if (mode.value === "verify-email") {
+    return {
+      eyebrow: "One last step",
+      title: "Check your\ninbox.",
+      subtitle: "Enter the six-digit code if your email needs verification. Already verified? Return to sign in.",
+      heading: "Verify your email",
+      button: "Verify email",
+    };
+  }
   if (mode.value === "forgot-password") {
     return {
       eyebrow: "Account recovery",
       title: "Let’s get you\nback on track.",
-      subtitle: "Password recovery will be available once ORBIT email delivery is configured.",
-      heading: "Password reset unavailable",
-      button: "Password reset unavailable",
+      subtitle: "We’ll email a reset code if an account matches that address.",
+      heading: "Reset your password",
+      button: "Send reset code",
+    };
+  }
+  if (mode.value === "reset-password") {
+    return {
+      eyebrow: "Account recovery",
+      title: "A fresh start,\nright here.",
+      subtitle: "Enter the code from your email and choose a new password.",
+      heading: "Choose a new password",
+      button: "Reset password",
     };
   }
   return {
@@ -53,55 +90,144 @@ const copy = computed(() => {
   };
 });
 
+function startCooldown(seconds: number): void {
+  resendCooldown.value = Math.max(0, Math.ceil(seconds));
+  if (cooldownTimer) clearInterval(cooldownTimer);
+  if (resendCooldown.value === 0) return;
+  cooldownTimer = setInterval(() => {
+    resendCooldown.value = Math.max(0, resendCooldown.value - 1);
+    if (resendCooldown.value === 0 && cooldownTimer) {
+      clearInterval(cooldownTimer);
+      cooldownTimer = undefined;
+    }
+  }, 1000);
+}
+
 watch(
   () => route.name,
   () => {
     message.value = "";
     password.value = "";
+    code.value = "";
+    unverifiedAccount.value = false;
     auth.clearError();
   },
 );
 
 watch(
   () => route.query.email,
-  (invitedEmail) => {
-    if (mode.value === "register" && typeof invitedEmail === "string") {
-      email.value = invitedEmail;
-    }
+  (queryEmail) => {
+    if (typeof queryEmail === "string") email.value = queryEmail;
   },
   { immediate: true },
 );
 
 async function submitAuthForm(): Promise<void> {
-  if (mode.value === "forgot-password") {
-    message.value =
-      "Password reset is unavailable until email delivery is configured. No reset email was sent.";
-    return;
-  }
-
   submitting.value = true;
   message.value = "";
+  unverifiedAccount.value = false;
   auth.clearError();
 
   try {
     if (mode.value === "register") {
-      await auth.register({ name: fullName.value, email: email.value, password: password.value });
-    } else {
-      await auth.login({ email: email.value, password: password.value });
+      const result = await auth.register({
+        name: fullName.value,
+        email: email.value,
+        password: password.value,
+      });
+      await router.push({
+        name: "verify-email",
+        query: {
+          email: result.email,
+          ...(redirectTarget.value ? { redirect: redirectTarget.value } : {}),
+          cooldown: String(result.resendCooldownSeconds),
+          registered: "true",
+        },
+      });
+      startCooldown(result.resendCooldownSeconds);
+      return;
     }
 
-    const redirect = route.query.redirect;
-    const destination =
-      typeof redirect === "string" && redirect.startsWith("/") && !redirect.startsWith("//")
-        ? redirect
-        : { name: "overview" };
-    await router.push(destination);
-  } catch {
-    message.value = auth.error || "Authentication failed. Please try again.";
+    if (mode.value === "verify-email") {
+      await authApi.verifyEmail({ email: email.value, code: code.value });
+      await router.replace({
+        name: "login",
+        query: {
+          verified: "true",
+          ...(redirectTarget.value ? { redirect: redirectTarget.value } : {}),
+        },
+      });
+      return;
+    }
+
+    if (mode.value === "forgot-password") {
+      await authApi.requestPasswordReset(email.value);
+      await router.push({
+        name: "reset-password",
+        query: {
+          email: email.value.trim().toLowerCase(),
+          ...(redirectTarget.value ? { redirect: redirectTarget.value } : {}),
+        },
+      });
+      message.value = "If an account exists for that email, a reset code has been sent.";
+      return;
+    }
+
+    if (mode.value === "reset-password") {
+      await authApi.resetPassword({
+        email: email.value,
+        code: code.value,
+        newPassword: password.value,
+      });
+      await router.replace({
+        name: "login",
+        query: {
+          reset: "true",
+          ...(redirectTarget.value ? { redirect: redirectTarget.value } : {}),
+        },
+      });
+      return;
+    }
+
+    await auth.login({ email: email.value, password: password.value });
+    await router.push(redirectTarget.value ?? { name: "overview" });
+  } catch (caught) {
+    if (mode.value === "login" && caught instanceof AuthApiError && caught.status === 403) {
+      unverifiedAccount.value = true;
+    }
+    message.value = auth.error || (caught instanceof Error ? caught.message : "Please try again.");
   } finally {
     submitting.value = false;
   }
 }
+
+async function resendVerification(): Promise<void> {
+  submitting.value = true;
+  message.value = "";
+  try {
+    const result = await authApi.resendVerification(email.value);
+    startCooldown(result.resendCooldownSeconds);
+    message.value = "If your account needs verification, a code has been sent.";
+  } catch (caught) {
+    message.value = caught instanceof Error ? caught.message : "Could not request another code.";
+  } finally {
+    submitting.value = false;
+  }
+}
+
+watch(
+  () => [route.name, route.query.cooldown] as const,
+  ([name, cooldown]) => {
+    if (name === "verify-email" && typeof cooldown === "string") {
+      startCooldown(Number(cooldown));
+    }
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  if (cooldownTimer) clearInterval(cooldownTimer);
+});
 </script>
 
 <template>
@@ -136,10 +262,16 @@ async function submitAuthForm(): Promise<void> {
           <p class="eyebrow">{{ mode === "register" ? "GET STARTED" : "YOUR WORKSPACE" }}</p>
           <h2>{{ copy.heading }}</h2>
           <p v-if="mode === 'login'">
-            New to ORBIT? <RouterLink :to="{ name: 'register' }">Create an account</RouterLink>
+            New to ORBIT? <RouterLink :to="{ name: 'register', query: redirectTarget ? { redirect: redirectTarget } : {} }">Create an account</RouterLink>
           </p>
           <p v-else-if="mode === 'register'">
-            Already have an account? <RouterLink :to="{ name: 'login' }">Sign in</RouterLink>
+            Already have an account? <RouterLink :to="{ name: 'login', query: redirectTarget ? { redirect: redirectTarget } : {} }">Sign in</RouterLink>
+          </p>
+          <p v-else-if="mode === 'verify-email'">
+            We sent a code to <strong>{{ email }}</strong>.
+          </p>
+          <p v-else-if="mode === 'reset-password'">
+            Enter the code sent to <strong>{{ email }}</strong>.
           </p>
           <p v-else>We’ll help you find your way back.</p>
         </div>
@@ -157,6 +289,7 @@ async function submitAuthForm(): Promise<void> {
               required
             />
           </label>
+
           <label class="form-field">
             <span>Email address</span>
             <input
@@ -169,13 +302,31 @@ async function submitAuthForm(): Promise<void> {
               required
             />
           </label>
-          <div v-if="mode !== 'forgot-password'" class="form-field">
+
+          <label v-if="mode === 'verify-email' || mode === 'reset-password'" class="form-field">
+            <span>{{ mode === "verify-email" ? "Verification code" : "Password reset code" }}</span>
+            <input
+              v-model="code"
+              name="code"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              pattern="[0-9]{6}"
+              minlength="6"
+              maxlength="6"
+              aria-describedby="auth-code-hint"
+              required
+            />
+            <span id="auth-code-hint">Enter the six-digit code from your email.</span>
+          </label>
+
+          <div v-if="mode === 'login' || mode === 'register' || mode === 'reset-password'" class="form-field">
             <span class="field-label-row">
-              <label for="auth-password">Password</label>
+              <label for="auth-password">{{ mode === "reset-password" ? "New password" : "Password" }}</label>
               <RouterLink
                 v-if="mode === 'login'"
                 class="field-side-link"
-                :to="{ name: 'forgot-password' }"
+                :to="{ name: 'forgot-password', query: redirectTarget ? { redirect: redirectTarget } : {} }"
               >
                 Forgot password?
               </RouterLink>
@@ -186,9 +337,9 @@ async function submitAuthForm(): Promise<void> {
                 id="auth-password"
                 name="password"
                 :type="showPassword ? 'text' : 'password'"
-                :placeholder="mode === 'register' ? 'At least 12 characters' : 'Enter your password'"
-                :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
-                :minlength="mode === 'register' ? 12 : undefined"
+                :placeholder="mode === 'login' ? 'Enter your password' : 'At least 12 characters'"
+                :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+                :minlength="mode === 'login' ? undefined : 12"
                 maxlength="128"
                 required
               />
@@ -204,50 +355,61 @@ async function submitAuthForm(): Promise<void> {
             </span>
           </div>
 
-          <p
-            v-if="mode === 'forgot-password'"
-            class="auth-notice"
-            role="status"
+          <p v-if="visibleMessage" class="auth-notice" role="status">{{ visibleMessage }}</p>
+          <RouterLink
+            v-if="unverifiedAccount"
+            class="field-side-link"
+            :to="{
+              name: 'verify-email',
+              query: { email, ...(redirectTarget ? { redirect: redirectTarget } : {}) },
+            }"
           >
-            Password reset is unavailable until email delivery is configured. No reset email will
-            be sent.
-          </p>
-          <p v-else-if="visibleMessage" class="auth-notice" role="alert">{{ visibleMessage }}</p>
+            Verify your email or request a new code
+          </RouterLink>
 
           <button
             class="button button--primary auth-submit"
             type="submit"
-            :disabled="submitting || mode === 'forgot-password'"
+            :disabled="submitting"
             :aria-busy="submitting"
           >
-            {{
-              submitting
-                ? mode === "register"
-                  ? "Creating account..."
-                  : "Signing in..."
-                : mode === "forgot-password"
-                  ? "Password reset unavailable"
-                  : copy.button
-            }}
-            <ArrowRight v-if="mode !== 'forgot-password'" :size="16" />
+            {{ submitting ? "Please wait..." : copy.button }}
+            <ArrowRight :size="16" />
           </button>
         </form>
 
-        <p class="auth-disclaimer" v-if="mode !== 'forgot-password'">
-          <span class="auth-disclaimer-dot"></span>
-          Passwords are protected with Argon2id. Your browser session uses an HTTP-only cookie.
-        </p>
-        <p class="auth-disclaimer" v-else>
-          <span class="auth-disclaimer-dot"></span>
-          Password reset is not available until email delivery has been configured.
-        </p>
+        <button
+          v-if="mode === 'verify-email'"
+          class="auth-return-link auth-resend-button"
+          type="button"
+          :disabled="submitting || resendCooldown > 0"
+          @click="resendVerification"
+        >
+          {{
+            resendCooldown > 0
+              ? `Resend code in ${resendCooldown}s`
+              : "Resend verification code"
+          }}
+        </button>
         <RouterLink
-          v-if="mode === 'forgot-password'"
+          v-if="mode === 'verify-email' || mode === 'reset-password'"
           class="auth-return-link"
-          :to="{ name: 'login' }"
+          :to="{ name: 'login', query: redirectTarget ? { redirect: redirectTarget } : {} }"
         >
           Return to sign in
         </RouterLink>
+        <RouterLink
+          v-if="mode === 'forgot-password'"
+          class="auth-return-link"
+          :to="{ name: 'login', query: redirectTarget ? { redirect: redirectTarget } : {} }"
+        >
+          Return to sign in
+        </RouterLink>
+
+        <p class="auth-disclaimer">
+          <span class="auth-disclaimer-dot"></span>
+          Passwords are protected with Argon2id. Your browser session uses an HTTP-only cookie.
+        </p>
       </div>
       <span class="auth-bottom-note">ORBIT — a calmer way to get there.</span>
     </section>

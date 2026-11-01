@@ -293,6 +293,19 @@
   font-size: 10.5px;
 }
 
+.auth-resend-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.auth-resend-button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .auth-bottom-note {
   position: absolute;
   right: 40px;

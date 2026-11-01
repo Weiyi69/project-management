@@ -43,6 +43,9 @@ export default defineConfig({
       VITE_PORT: String(webPort),
       VITE_API_PROXY_TARGET: `http://127.0.0.1:${apiPort}`,
       NODE_ENV: "test",
+      ORBIT_EMAIL_MODE: "memory",
+      ORBIT_TEST_OTP: "123456",
+      OTP_PEPPER: "integration-test-only-otp-pepper-32-bytes-minimum",
     },
   },
 });

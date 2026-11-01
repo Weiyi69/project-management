@@ -29,6 +29,7 @@ const prismaStub = {
             user: {
               id: userId,
               name: "Test User",
+              emailVerifiedAt: new Date(),
               workspaceMemberships: [{ workspaceId }],
             },
           }
@@ -40,6 +41,7 @@ const prismaStub = {
               user: {
                 id: observerId,
                 name: "Observer",
+                emailVerifiedAt: new Date(),
                 workspaceMemberships: [{ workspaceId }],
               },
             }

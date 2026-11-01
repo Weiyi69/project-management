@@ -23,15 +23,49 @@ async function assertWcagAa(page: import("@playwright/test").Page): Promise<void
 
 test("registers, creates project work, and loads accessible analytics", async ({ page }) => {
   const navigationDurations: Record<string, number> = {};
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const email = `quality-browser-${suffix}@example.test`;
+  const invitationToken = "quality-browser-invitation-token";
+  let newWorkspaceId = "";
+  await page.route(`**/api/v1/invitations/preview/${invitationToken}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        invitation: {
+          email,
+          role: "MEMBER",
+          workspaceName: "Quality invited workspace",
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          accepted: false,
+        },
+      }),
+    }),
+  );
+  await page.route("**/api/v1/invitations/accept", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        workspace: {
+          id: newWorkspaceId,
+          name: "Quality browser user's workspace",
+          slug: "quality-browser-workspace",
+          role: "OWNER",
+        },
+      }),
+    }),
+  );
   const startedAt = performance.now();
-  await page.goto("/register");
+  await page.goto(`/invitations/accept?token=${invitationToken}`);
+  await expect(page.getByRole("heading", { name: "Join your workspace" })).toBeVisible();
+  await page.getByRole("link", { name: "Create an account" }).click();
   await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
   navigationDurations.registrationPage = performance.now() - startedAt;
   await assertWcagAa(page);
 
-  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   await page.getByLabel("Your name").fill("Quality Browser User");
-  await page.getByLabel("Email address").fill(`quality-browser-${suffix}@example.test`);
+  await expect(page.getByLabel("Email address")).toHaveValue(email);
   await page.getByRole("textbox", { name: "Password" }).fill("quality-suite-password-123");
 
   const registrationStartedAt = performance.now();
@@ -45,7 +79,32 @@ test("registers, creates project work, and loads accessible analytics", async ({
     registrationResponse.ok(),
     `Registration returned HTTP ${registrationResponse.status()}: ${registrationBody}`,
   ).toBe(true);
-  await expect(page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ })).toBeVisible();
+
+  await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/verify-email");
+  expect(
+    (await page.context().cookies()).some((cookie) => cookie.name === "orbit_session"),
+  ).toBe(false);
+  await assertWcagAa(page);
+  await page.getByLabel("Verification code").fill("123456");
+  await page.getByRole("button", { name: "Verify email" }).click();
+  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  await expect(page.getByText("Email verified successfully. You can now sign in.")).toBeVisible();
+  expect(
+    (await page.context().cookies()).some((cookie) => cookie.name === "orbit_session"),
+  ).toBe(false);
+  await page.getByRole("textbox", { name: "Password" }).fill("quality-suite-password-123");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Join your workspace" })).toBeVisible();
+  const currentUser = await page.evaluate(async () => {
+    const response = await fetch("/api/v1/auth/me", { credentials: "include" });
+    const body = (await response.json()) as { user?: { workspaceId?: string } };
+    return body.user?.workspaceId ?? "";
+  });
+  expect(currentUser).not.toBe("");
+  newWorkspaceId = currentUser;
+  await page.getByRole("button", { name: "Accept invitation" }).click();
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
   navigationDurations.registration = performance.now() - registrationStartedAt;
 
   const projectsStartedAt = performance.now();

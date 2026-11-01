@@ -95,13 +95,19 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
           select: {
             id: true,
             name: true,
+            emailVerifiedAt: true,
             workspaceMemberships: { select: { workspaceId: true } },
           },
         },
       },
     });
 
-    if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+    if (
+      !session ||
+      session.revokedAt ||
+      session.expiresAt <= new Date() ||
+      !session.user.emailVerifiedAt
+    ) {
       throw new Error("Unauthorized realtime session.");
     }
 

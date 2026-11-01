@@ -30,7 +30,12 @@ export class AuthGuard implements CanActivate {
       },
     });
 
-    if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+    if (
+      !session ||
+      session.revokedAt ||
+      session.expiresAt <= new Date() ||
+      !session.user.emailVerifiedAt
+    ) {
       throw new UnauthorizedException("Your session has expired. Please sign in again.");
     }
 

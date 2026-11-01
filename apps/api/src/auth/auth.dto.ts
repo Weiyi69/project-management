@@ -1,4 +1,10 @@
-import { IsEmail, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import {
+  IsEmail,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from "class-validator";
 
 export class RegisterDto {
   @IsString()
@@ -26,4 +32,27 @@ export class LoginDto {
   @MinLength(1)
   @MaxLength(128)
   password!: string;
+}
+
+export class EmailCodeDto {
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/)
+  code!: string;
+}
+
+export class EmailOnlyDto {
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+}
+
+export class PasswordResetDto extends EmailCodeDto {
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  newPassword!: string;
 }

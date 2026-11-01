@@ -8,7 +8,10 @@ import { after, before, test } from "node:test";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "../app.module";
+import { takeTestEmails } from "../email/email.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { RateLimitService } from "../rate-limits/rate-limit.service";
+import { hashRateLimitKey } from "../auth/auth-crypto";
 
 const TEST_DATABASE_NAME = "orbit_test";
 const password = "quality-suite-password-123";
@@ -50,6 +53,38 @@ function cookieFrom(response: Response): string {
   return setCookie.split(";")[0]!;
 }
 
+function codeFromTestEmail(email: string): string {
+  const message = takeTestEmails(email).find((item) => item.subject.includes("code"));
+  assert.ok(message, "Expected the test email transport to capture an authentication code.");
+  const match = message.text.match(/code is (\d{6})/);
+  assert.ok(match, "Expected a six-digit code in the captured test message.");
+  return match[1]!;
+}
+
+async function getUserRowLockWaiterCount(database: PrismaService): Promise<number> {
+  const rows = await database.$queryRaw<Array<{ waiting: number }>>`
+    SELECT COUNT(*)::int AS "waiting"
+    FROM pg_stat_activity
+    WHERE datname = current_database()
+      AND pid <> pg_backend_pid()
+      AND wait_event_type = 'Lock'
+      AND query LIKE '%FOR UPDATE%'
+  `;
+  return rows[0]?.waiting ?? 0;
+}
+
+async function waitForUserRowLockWaiters(
+  database: PrismaService,
+  minimumWaiters: number,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if ((await getUserRowLockWaiterCount(database)) >= minimumWaiters) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${minimumWaiters} PostgreSQL user-row lock waiter(s).`);
+}
+
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const method = init.method ?? "GET";
   const startedAt = performance.now();
@@ -74,6 +109,10 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
 before(async () => {
   process.env.DATABASE_URL = requireIsolatedTestDatabase();
   process.env.FRONTEND_URL = "http://127.0.0.1:5173";
+  process.env.NODE_ENV = "test";
+  process.env.ORBIT_EMAIL_MODE = "memory";
+  process.env.ORBIT_TEST_OTP = "123456";
+  process.env.OTP_PEPPER ??= "integration-test-only-otp-pepper-32-bytes-minimum";
   app = await NestFactory.create(AppModule, { logger: ["error"] });
   app.setGlobalPrefix("api/v1");
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
@@ -83,6 +122,7 @@ before(async () => {
   assert.ok(address && typeof address !== "string");
   baseUrl = `http://127.0.0.1:${address.port}`;
   prisma = app.get(PrismaService);
+  await prisma.rateLimitBucket.deleteMany();
 });
 
 after(async () => {
@@ -116,13 +156,103 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     body: JSON.stringify({ name: "Quality Owner", email: ownerEmail, password }),
   });
   assert.equal(registration.status, 201);
-  const ownerCookie = cookieFrom(registration);
-  const ownerData = (await registration.json()) as {
-    user: { id: string; workspaceId: string; workspaceName: string };
+  assert.equal(registration.headers.get("set-cookie"), null);
+  const registrationData = (await registration.json()) as {
+    email: string;
+    verificationRequired: boolean;
+    resendCooldownSeconds: number;
   };
-  createdUserIds.push(ownerData.user.id);
-  createdWorkspaceIds.push(ownerData.user.workspaceId);
-  assert.equal(ownerData.user.workspaceName, "Quality Owner's workspace");
+  assert.equal(registrationData.email, ownerEmail);
+  assert.equal(registrationData.verificationRequired, true);
+  assert.equal(registrationData.resendCooldownSeconds, 60);
+  const ownerRecord = await prisma.user.findUniqueOrThrow({
+    where: { email: ownerEmail },
+    include: { workspaceMemberships: { include: { workspace: true } } },
+  });
+  const ownerWorkspace = ownerRecord.workspaceMemberships[0]?.workspace;
+  assert.ok(ownerWorkspace);
+  createdUserIds.push(ownerRecord.id);
+  createdWorkspaceIds.push(ownerWorkspace.id);
+  assert.equal(ownerRecord.emailVerifiedAt, null);
+  assert.equal(await prisma.refreshSession.count({ where: { userId: ownerRecord.id } }), 0);
+  assert.equal(await prisma.authCode.count({ where: { userId: ownerRecord.id } }), 1);
+  const initialCode = codeFromTestEmail(ownerEmail);
+  const storedInitialCode = await prisma.authCode.findFirstOrThrow({
+    where: { userId: ownerRecord.id, purpose: "EMAIL_VERIFICATION" },
+  });
+  assert.notEqual(storedInitialCode.codeHash, initialCode);
+  assert.equal(storedInitialCode.codeHash.includes(initialCode), false);
+
+  const unverifiedLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail, password }),
+  });
+  assert.equal(unverifiedLogin.status, 403);
+  const immediateResend = await request("/auth/resend-verification", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail }),
+  });
+  assert.equal(immediateResend.status, 429);
+
+  const invalidCodeResponse = await request("/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail, code: "000000" }),
+  });
+  assert.equal(invalidCodeResponse.status, 400);
+  await prisma.authCode.update({
+    where: { id: storedInitialCode.id },
+    data: {
+      createdAt: new Date(Date.now() - 2 * 60 * 1000),
+      expiresAt: new Date(Date.now() - 60 * 1000),
+    },
+  });
+  const expiredCodeResponse = await request("/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail, code: initialCode }),
+  });
+  assert.equal(expiredCodeResponse.status, 400);
+
+  const verificationResend = await request("/auth/resend-verification", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail }),
+  });
+  assert.equal(verificationResend.status, 200);
+  const verificationCode = codeFromTestEmail(ownerEmail);
+  const verifiedResponse = await request("/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail, code: verificationCode }),
+  });
+  assert.equal(verifiedResponse.status, 200);
+  assert.equal(await prisma.user.findUniqueOrThrow({ where: { id: ownerRecord.id } }).then(
+    (user) => user.emailVerifiedAt !== null,
+  ), true);
+  const reusedVerificationCode = await request("/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail, code: verificationCode }),
+  });
+  assert.equal(reusedVerificationCode.status, 400);
+
+  const duplicateVerifiedRegistration = await request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name: "Quality Owner", email: ownerEmail, password }),
+  });
+  assert.equal(duplicateVerifiedRegistration.status, registration.status);
+  assert.deepEqual(await duplicateVerifiedRegistration.json(), registrationData);
+  assert.deepEqual(takeTestEmails(ownerEmail), []);
+
+  const ownerLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail, password }),
+  });
+  assert.equal(ownerLogin.status, 200);
+  const ownerCookie = cookieFrom(ownerLogin);
+  const ownerData = {
+    user: {
+      id: ownerRecord.id,
+      workspaceId: ownerWorkspace.id,
+      workspaceName: ownerWorkspace.name,
+    },
+  };
 
   const me = await request("/auth/me", { headers: { cookie: ownerCookie } });
   assert.equal(me.status, 200);
@@ -241,12 +371,29 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     body: JSON.stringify({ name: "Quality Outsider", email: outsiderEmail, password }),
   });
   assert.equal(outsiderRegistration.status, 201);
-  const outsiderCookie = cookieFrom(outsiderRegistration);
-  const outsiderData = (await outsiderRegistration.json()) as {
-    user: { id: string; workspaceId: string };
-  };
-  createdUserIds.push(outsiderData.user.id);
-  createdWorkspaceIds.push(outsiderData.user.workspaceId);
+  assert.equal(outsiderRegistration.headers.get("set-cookie"), null);
+  const outsiderData = await prisma.user.findUniqueOrThrow({
+    where: { email: outsiderEmail },
+    include: { workspaceMemberships: { include: { workspace: true } } },
+  });
+  createdUserIds.push(outsiderData.id);
+  createdWorkspaceIds.push(outsiderData.workspaceMemberships[0]!.workspace.id);
+  const outsiderCode = codeFromTestEmail(outsiderEmail);
+  assert.equal(
+    (
+      await request("/auth/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ email: outsiderEmail, code: outsiderCode }),
+      })
+    ).status,
+    200,
+  );
+  const outsiderLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: outsiderEmail, password }),
+  });
+  assert.equal(outsiderLogin.status, 200);
+  const outsiderCookie = cookieFrom(outsiderLogin);
 
   const outsiderWorkspaceAnalytics = await request(
     `/analytics/workspaces/${ownerData.user.workspaceId}`,
@@ -257,6 +404,58 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     headers: { cookie: outsiderCookie },
   });
   assert.equal(outsiderProjectAnalytics.status, 404);
+
+  const attemptsEmail = `quality-attempts-${emailSuffix}@example.test`;
+  const attemptsRegistration = await request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Quality Attempts",
+      email: attemptsEmail,
+      password,
+    }),
+  });
+  assert.equal(attemptsRegistration.status, 201);
+  const attemptsUser = await prisma.user.findUniqueOrThrow({
+    where: { email: attemptsEmail },
+    include: { workspaceMemberships: { include: { workspace: true } } },
+  });
+  createdUserIds.push(attemptsUser.id);
+  createdWorkspaceIds.push(attemptsUser.workspaceMemberships[0]!.workspace.id);
+  const attemptsCode = codeFromTestEmail(attemptsEmail);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    assert.equal(
+      (
+        await request("/auth/verify-email", {
+          method: "POST",
+          body: JSON.stringify({ email: attemptsEmail, code: "000000" }),
+        })
+      ).status,
+      400,
+    );
+  }
+  assert.equal(
+    (
+      await request("/auth/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ email: attemptsEmail, code: attemptsCode }),
+      })
+    ).status,
+    400,
+  );
+  const exhaustedVerificationCode = await prisma.authCode.findFirstOrThrow({
+    where: { userId: attemptsUser.id, purpose: "EMAIL_VERIFICATION" },
+  });
+  assert.equal(exhaustedVerificationCode.attempts, 5);
+  assert.ok(exhaustedVerificationCode.consumedAt);
+  assert.equal(
+    (
+      await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: attemptsEmail, password }),
+      })
+    ).status,
+    403,
+  );
 
   const csvResponse = await request(
     `/analytics/projects/${projectId}/export.csv`,
@@ -285,12 +484,419 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   assert.equal(completedAnalytics.project.health.completionRate, 100);
   assert.equal(completedAnalytics.project.health.status, "ON_TRACK");
 
+  const invitationEmail = `quality-invite-${emailSuffix}@example.test`;
+  const invitationResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/invitations`,
+    {
+      method: "POST",
+      headers: {
+        cookie: ownerCookie,
+        "x-workspace-id": ownerWorkspace.id,
+      },
+      body: JSON.stringify({ email: invitationEmail, role: "MEMBER" }),
+    },
+  );
+  assert.equal(invitationResponse.status, 201);
+  const invitationMessage = takeTestEmails(invitationEmail).find((item) =>
+    item.subject.includes("invited"),
+  );
+  assert.ok(invitationMessage);
+  const invitationLink = invitationMessage.text.match(/Accept your invitation: (\S+)/);
+  assert.ok(invitationLink);
+  const invitationToken = new URL(invitationLink[1]!).searchParams.get("token");
+  assert.ok(invitationToken);
+  const invitationPreview = await request(
+    `/invitations/preview/${encodeURIComponent(invitationToken)}`,
+  );
+  assert.equal(invitationPreview.status, 200);
+
+  const invitedRegistration = await request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Quality Invitee",
+      email: invitationEmail,
+      password,
+    }),
+  });
+  assert.equal(invitedRegistration.status, 201);
+  assert.equal(invitedRegistration.headers.get("set-cookie"), null);
+  const invitedUser = await prisma.user.findUniqueOrThrow({
+    where: { email: invitationEmail },
+    include: { workspaceMemberships: { include: { workspace: true } } },
+  });
+  createdUserIds.push(invitedUser.id);
+  createdWorkspaceIds.push(invitedUser.workspaceMemberships[0]!.workspace.id);
+  const inviteeVerificationCode = codeFromTestEmail(invitationEmail);
+  assert.equal(
+    (
+      await request("/auth/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ email: invitationEmail, code: inviteeVerificationCode }),
+      })
+    ).status,
+    200,
+  );
+  const inviteeLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: invitationEmail, password }),
+  });
+  assert.equal(inviteeLogin.status, 200);
+  const inviteeCookie = cookieFrom(inviteeLogin);
+  const acceptedInvitation = await request("/invitations/accept", {
+    method: "POST",
+    headers: { cookie: inviteeCookie },
+    body: JSON.stringify({ token: invitationToken }),
+  });
+  assert.equal(acceptedInvitation.status, 200);
+  const acceptedData = (await acceptedInvitation.json()) as {
+    workspace: { id: string };
+  };
+  assert.equal(acceptedData.workspace.id, ownerWorkspace.id);
+
+  const resetRequest = await request("/auth/password-reset/request", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail }),
+  });
+  assert.equal(resetRequest.status, 200);
+  assert.match((await resetRequest.json()).message, /If an account exists/);
+  const resetCode = codeFromTestEmail(ownerEmail);
+  const resetCodeRow = await prisma.authCode.findFirstOrThrow({
+    where: { userId: ownerRecord.id, purpose: "PASSWORD_RESET", consumedAt: null },
+    orderBy: { createdAt: "desc" },
+  });
+  assert.equal(resetCodeRow.codeHash.includes(resetCode), false);
+  const invalidReset = await request("/auth/password-reset/confirm", {
+    method: "POST",
+    body: JSON.stringify({
+      email: ownerEmail,
+      code: "000000",
+      newPassword: "quality-suite-password-updated-456",
+    }),
+  });
+  assert.equal(invalidReset.status, 400);
+
+  await prisma.authCode.update({
+    where: { id: resetCodeRow.id },
+    data: {
+      createdAt: new Date(Date.now() - 2 * 60 * 1000),
+      expiresAt: new Date(Date.now() - 60 * 1000),
+    },
+  });
+  assert.equal(
+    (
+      await request("/auth/password-reset/confirm", {
+        method: "POST",
+        body: JSON.stringify({
+          email: ownerEmail,
+          code: resetCode,
+          newPassword: "quality-suite-password-updated-456",
+        }),
+      })
+    ).status,
+    400,
+  );
+  const exhaustedResetRequest = await request("/auth/password-reset/request", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail }),
+  });
+  assert.equal(exhaustedResetRequest.status, 200);
+  const exhaustedResetCode = codeFromTestEmail(ownerEmail);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    assert.equal(
+      (
+        await request("/auth/password-reset/confirm", {
+          method: "POST",
+          body: JSON.stringify({
+            email: ownerEmail,
+            code: "000000",
+            newPassword: "quality-suite-password-updated-456",
+          }),
+        })
+      ).status,
+      400,
+    );
+  }
+  assert.equal(
+    (
+      await request("/auth/password-reset/confirm", {
+        method: "POST",
+        body: JSON.stringify({
+          email: ownerEmail,
+          code: exhaustedResetCode,
+          newPassword: "quality-suite-password-updated-456",
+        }),
+      })
+    ).status,
+    400,
+  );
+  const exhaustedResetRow = await prisma.authCode.findFirstOrThrow({
+    where: { userId: ownerRecord.id, purpose: "PASSWORD_RESET" },
+    orderBy: { createdAt: "desc" },
+  });
+  await prisma.authCode.update({
+    where: { id: exhaustedResetRow.id },
+    data: { createdAt: new Date(Date.now() - 2 * 60 * 1000) },
+  });
+  const finalResetRequest = await request("/auth/password-reset/request", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail }),
+  });
+  assert.equal(finalResetRequest.status, 200);
+  const resetCodeForConcurrentUse = codeFromTestEmail(ownerEmail);
+
+  const otherOwnerSession = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: ownerEmail, password }),
+  });
+  assert.equal(otherOwnerSession.status, 200);
+  const otherOwnerCookie = cookieFrom(otherOwnerSession);
+  const resetResults = await Promise.all([
+    request("/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        email: ownerEmail,
+        code: resetCodeForConcurrentUse,
+        newPassword: "quality-suite-password-updated-456",
+      }),
+    }),
+    request("/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        email: ownerEmail,
+        code: resetCodeForConcurrentUse,
+        newPassword: "quality-suite-password-updated-456",
+      }),
+    }),
+  ]);
+  assert.deepEqual(
+    resetResults.map((result) => result.status).sort(),
+    [200, 400],
+  );
+  assert.equal(
+    (
+      await request("/auth/me", {
+        headers: { cookie: ownerCookie },
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request("/auth/me", {
+        headers: { cookie: otherOwnerCookie },
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: ownerEmail,
+          password: "quality-suite-password-updated-456",
+        }),
+      })
+    ).status,
+    200,
+  );
+
+  const raceEmail = `quality-reset-race-${emailSuffix}@example.test`;
+  const raceRegistration = await request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name: "Quality Reset Race", email: raceEmail, password }),
+  });
+  assert.equal(raceRegistration.status, 201);
+  const raceUser = await prisma.user.findUniqueOrThrow({
+    where: { email: raceEmail },
+    include: { workspaceMemberships: { include: { workspace: true } } },
+  });
+  createdUserIds.push(raceUser.id);
+  createdWorkspaceIds.push(raceUser.workspaceMemberships[0]!.workspace.id);
+  const raceVerificationCode = codeFromTestEmail(raceEmail);
+  assert.equal(
+    (
+      await request("/auth/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ email: raceEmail, code: raceVerificationCode }),
+      })
+    ).status,
+    200,
+  );
+  const raceExistingLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: raceEmail, password }),
+  });
+  assert.equal(raceExistingLogin.status, 200);
+  const raceExistingCookie = cookieFrom(raceExistingLogin);
+  assert.equal(
+    (
+      await request("/auth/password-reset/request", {
+        method: "POST",
+        body: JSON.stringify({ email: raceEmail }),
+      })
+    ).status,
+    200,
+  );
+  const raceResetCode = codeFromTestEmail(raceEmail);
+  const rowLockPrisma = new PrismaService();
+  await rowLockPrisma.$connect();
+  let releaseUserLock!: () => void;
+  let signalUserLockAcquired!: () => void;
+  const releaseGate = new Promise<void>((resolve) => {
+    releaseUserLock = resolve;
+  });
+  const userLockAcquired = new Promise<void>((resolve) => {
+    signalUserLockAcquired = resolve;
+  });
+  const rowLockHolder = rowLockPrisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw`
+      SELECT "id" FROM "User" WHERE "id" = ${raceUser.id}::uuid FOR UPDATE
+    `;
+    signalUserLockAcquired();
+    await releaseGate;
+  });
+  await userLockAcquired;
+
+  let resetRaceRequest: Promise<Response> | undefined;
+  let loginRaceRequest: Promise<Response> | undefined;
+  let loginStayedBlocked = false;
+  let lockWaitersAfterLogin = 0;
+  try {
+    resetRaceRequest = request("/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        email: raceEmail,
+        code: raceResetCode,
+        newPassword: "quality-suite-password-raced-789",
+      }),
+    });
+    await waitForUserRowLockWaiters(rowLockPrisma, 1);
+    loginRaceRequest = request("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: raceEmail, password }),
+    });
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      lockWaitersAfterLogin = await getUserRowLockWaiterCount(rowLockPrisma);
+      if (lockWaitersAfterLogin >= 2) {
+        loginStayedBlocked = true;
+        break;
+      }
+      const loginCompleted = await Promise.race([
+        loginRaceRequest.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10)),
+      ]);
+      if (loginCompleted) break;
+    }
+  } finally {
+    releaseUserLock();
+    await rowLockHolder;
+    await Promise.allSettled(
+      [resetRaceRequest, loginRaceRequest].filter(
+        (pending): pending is Promise<Response> => pending !== undefined,
+      ),
+    );
+    await rowLockPrisma.$disconnect();
+  }
+  const [racingReset, racingLogin] = await Promise.all([
+    resetRaceRequest,
+    loginRaceRequest,
+  ]);
+  assert.equal(loginStayedBlocked, true);
+  assert.ok(lockWaitersAfterLogin >= 2);
+  assert.equal(racingReset.status, 200);
+  assert.equal(
+    (
+      await request("/auth/me", {
+        headers: { cookie: raceExistingCookie },
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    await prisma.refreshSession.count({
+      where: { userId: raceUser.id, revokedAt: null },
+    }),
+    0,
+  );
+  if (racingLogin.status === 200) {
+    const racingLoginCookie = cookieFrom(racingLogin);
+    assert.equal(
+      (
+        await request("/auth/me", {
+          headers: { cookie: racingLoginCookie },
+        })
+      ).status,
+      401,
+    );
+  }
+  assert.equal(
+    (
+      await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: raceEmail, password }),
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: raceEmail,
+          password: "quality-suite-password-raced-789",
+        }),
+      })
+    ).status,
+    200,
+  );
+
+  const unknownResetRequest = await request("/auth/password-reset/request", {
+    method: "POST",
+    body: JSON.stringify({ email: `unknown-${emailSuffix}@example.test` }),
+  });
+  assert.equal(unknownResetRequest.status, resetRequest.status);
+  assert.deepEqual(await unknownResetRequest.json(), await Promise.resolve({
+    message: "If an account exists for that email, a reset code has been sent.",
+  }));
+
+  const rateLimits = app.get(RateLimitService);
+  const secondPrisma = new PrismaService();
+  await secondPrisma.$connect();
+  try {
+    const secondInstanceLimiter = new RateLimitService(secondPrisma);
+    const limitScope = `integration-concurrency-${emailSuffix}`;
+    const limitSubject = "shared-client";
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: 20 }, (_, index) =>
+        (index % 2 === 0 ? rateLimits : secondInstanceLimiter).enforce(
+          limitScope,
+          limitSubject,
+          7,
+          60_000,
+        ),
+      ),
+    );
+    assert.equal(outcomes.filter(({ status }) => status === "fulfilled").length, 7);
+    assert.equal(outcomes.filter(({ status }) => status === "rejected").length, 13);
+    await assert.rejects(
+      secondInstanceLimiter.enforce(limitScope, limitSubject, 7, 60_000),
+    );
+    await prisma.rateLimitBucket.deleteMany({
+      where: { key: hashRateLimitKey(limitScope, limitSubject) },
+    });
+  } finally {
+    await secondPrisma.$disconnect();
+  }
+
   const logout = await request("/auth/logout", {
     method: "POST",
-    headers: { cookie: ownerCookie },
+    headers: { cookie: inviteeCookie },
   });
   assert.equal(logout.status, 200);
-  const revokedMe = await request("/auth/me", { headers: { cookie: ownerCookie } });
+  const revokedMe = await request("/auth/me", { headers: { cookie: inviteeCookie } });
   assert.equal(revokedMe.status, 401);
 
   const percentiles = (values: number[]) => {

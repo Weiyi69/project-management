@@ -43,13 +43,10 @@ export const useAuthStore = defineStore("auth", () => {
     return initializationPromise;
   }
 
-  async function register(input: { name: string; email: string; password: string }): Promise<void> {
+  async function register(input: { name: string; email: string; password: string }) {
     error.value = "";
     try {
-      const response = await authApi.register(input);
-      useWorkspaceStore().reset();
-      user.value = response.user;
-      initialized.value = true;
+      return await authApi.register(input);
     } catch (caught) {
       error.value =
         caught instanceof Error ? caught.message : "Could not create your account.";

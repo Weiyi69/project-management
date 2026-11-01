@@ -109,10 +109,22 @@ export const router = createRouter({
       meta: { title: "Create account", public: true },
     },
     {
+      path: "/verify-email",
+      name: "verify-email",
+      component: AuthView,
+      meta: { title: "Verify email", public: true },
+    },
+    {
       path: "/forgot-password",
       name: "forgot-password",
       component: AuthView,
       meta: { title: "Reset password", public: true },
+    },
+    {
+      path: "/reset-password",
+      name: "reset-password",
+      component: AuthView,
+      meta: { title: "Choose a new password", public: true },
     },
     {
       path: "/invitations/accept",

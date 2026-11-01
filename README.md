@@ -145,6 +145,7 @@ The Vite development server proxies both `/api` and `/socket.io` to the local AP
 | `corepack pnpm test:e2e` | Run Chromium core-flow, keyboard-dialog, and axe WCAG 2.1 AA-oriented checks |
 
 Stage 8 quality check details, isolated local PostgreSQL integration setup, performance measurement outputs, and coverage limits are documented in [QUALITY.md](./QUALITY.md).
+Email verification, Gmail SMTP setup, password recovery, and the opt-in delivery smoke test are documented in [EMAIL_AUTH.md](./EMAIL_AUTH.md).
 
 ## Workspace layout
 

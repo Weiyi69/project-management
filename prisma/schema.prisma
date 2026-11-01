@@ -42,12 +42,18 @@ enum NotificationType {
   INVITATION_RECEIVED
 }
 
+enum AuthCodePurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
 model User {
   id                    String                @id @default(uuid()) @db.Uuid
   name                  String
   email                 String                @unique
   passwordHash          String
   avatarUrl             String?
+  emailVerifiedAt       DateTime?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   ownedWorkspaces       Workspace[]           @relation("WorkspaceOwner")
@@ -62,6 +68,7 @@ model User {
   receivedNotifications Notification[]        @relation("NotificationRecipient")
   actedNotifications    Notification[]        @relation("NotificationActor")
   refreshSessions       RefreshSession[]
+  authCodes             AuthCode[]
 
   @@index([name])
 }
@@ -293,4 +300,27 @@ model RefreshSession {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+}
+
+model AuthCode {
+  id         String          @id @default(uuid()) @db.Uuid
+  userId     String          @db.Uuid
+  purpose    AuthCodePurpose
+  codeHash   String
+  attempts   Int             @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime        @default(now())
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
+}
+
+model RateLimitBucket {
+  key       String   @id
+  hits      Int      @default(0)
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }
