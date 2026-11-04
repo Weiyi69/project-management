@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { ActivityService } from "../activity/activity.service";
 import { Prisma } from "../generated/prisma/client";
 import type { TaskPriority as TaskPriorityContract } from "@orbit/contracts";
@@ -313,7 +314,7 @@ export class TasksService {
     await this.requireLabels(projectId, input.labelIds ?? []);
     const position = await this.nextPosition(projectId, input.statusId);
 
-    const { task, notification } = await this.prisma.$transaction(async (transaction) => {
+    const { task, notification, projectUpdates } = await this.prisma.$transaction(async (transaction) => {
       const createdTask = await transaction.task.create({
         data: {
           projectId,
@@ -360,10 +361,18 @@ export class TasksService {
           createdTask.id,
           createdTask.assigneeId,
         ),
+        projectUpdates: await this.notifications.createProjectUpdateNotifications(
+          transaction,
+          userId,
+          "TASK",
+          createdTask.id,
+          randomUUID(),
+        ),
       };
     });
 
-    if (notification) this.notifications.publishCreated(notification);
+    if (notification) await this.notifications.publishCreated(notification);
+    for (const projectUpdate of projectUpdates) await this.notifications.publishCreated(projectUpdate);
     this.realtime.publishTaskEvent({
       projectId,
       taskId: task.id,
@@ -421,7 +430,7 @@ export class TasksService {
           }
         : {}),
     };
-    const { updated, notification } = await this.prisma.$transaction(async (transaction) => {
+    const { updated, notification, projectUpdates } = await this.prisma.$transaction(async (transaction) => {
       const savedTask = await transaction.task.update({
         where: { id: taskId },
         data,
@@ -436,6 +445,28 @@ export class TasksService {
               savedTask.assigneeId,
             )
           : undefined;
+      const dueDateChanged =
+        input.dueDate !== undefined &&
+        savedTask.dueDate?.getTime() !== task.dueDate?.getTime();
+      const priorityChanged =
+        input.priority !== undefined && savedTask.priority !== task.priority;
+      const projectUpdates =
+        statusChanged || dueDateChanged || priorityChanged
+          ? await this.notifications.createProjectUpdateNotifications(
+              transaction,
+              userId,
+              "TASK",
+              taskId,
+              randomUUID(),
+            )
+          : [];
+      const assigneeChanged =
+        input.assigneeId !== undefined && savedTask.assigneeId !== task.assigneeId;
+      if (dueDateChanged || assigneeChanged || (statusChanged &&
+        (savedTask.status.isCompleted ||
+          ["cancelled", "canceled"].includes(savedTask.status.name.trim().toLowerCase())))) {
+        await this.notifications.invalidateTaskReminders(transaction, taskId);
+      }
       if (statusChanged) {
         await this.activity.record(transaction, {
           workspaceId: project.workspaceId,
@@ -462,7 +493,7 @@ export class TasksService {
           metadata: { title: savedTask.title },
         });
       }
-      if (input.priority !== undefined && input.priority !== task.priority) {
+      if (priorityChanged) {
         await this.activity.record(transaction, {
           workspaceId: project.workspaceId,
           projectId: task.projectId,
@@ -477,10 +508,11 @@ export class TasksService {
           },
         });
       }
-      return { updated: savedTask, notification: assignmentNotification };
+      return { updated: savedTask, notification: assignmentNotification, projectUpdates };
     });
 
-    if (notification) this.notifications.publishCreated(notification);
+    if (notification) await this.notifications.publishCreated(notification);
+    for (const projectUpdate of projectUpdates) await this.notifications.publishCreated(projectUpdate);
     this.realtime.publishTaskEvent({
       projectId: task.projectId,
       taskId,
@@ -528,7 +560,7 @@ export class TasksService {
         ),
       };
     });
-    for (const notification of notifications) this.notifications.publishCreated(notification);
+    for (const notification of notifications) await this.notifications.publishCreated(notification);
     this.realtime.publishTaskEvent({
       projectId: task.projectId,
       taskId,

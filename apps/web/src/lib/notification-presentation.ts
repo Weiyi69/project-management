@@ -8,5 +8,5 @@ export function notificationMessage(notification: NotificationSummary): string {
   if (notification.type === "COMMENT_ADDED") return `${actor} commented on ${task}.`;
   if (notification.type === "DUE_DATE_REMINDER") return `${task} is due soon.`;
   if (notification.type === "INVITATION_RECEIVED") return `${actor} invited you to a workspace.`;
-  return `${actor} updated ${task}.`;
+  return `${actor} updated ${notification.project?.name ?? notification.task?.projectName ?? "a project"}.`;
 }

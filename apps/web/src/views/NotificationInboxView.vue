@@ -69,6 +69,10 @@ async function openNotification(notification: NotificationSummary): Promise<void
     }
     if (notification.task) {
       await router.push({ name: "project-detail", params: { projectId: notification.task.projectId } });
+    } else if (notification.project) {
+      await router.push({ name: "project-detail", params: { projectId: notification.project.id } });
+    } else if (notification.workspaceInvitation) {
+      await router.push({ name: "overview" });
     }
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "Could not open this notification.";
@@ -142,7 +146,7 @@ onBeforeUnmount(() => {
         <span class="inbox-notification-icon"><Bell :size="16" /></span>
         <span class="inbox-notification-copy">
           <strong>{{ notificationMessage(notification) }}</strong>
-          <span>{{ notification.task?.projectName ?? "ORBIT" }}</span>
+          <span>{{ notification.task?.projectName ?? notification.project?.name ?? notification.workspaceInvitation?.workspaceName ?? "ORBIT" }}</span>
         </span>
         <time :datetime="notification.createdAt">
           {{ new Date(notification.createdAt).toLocaleString() }}

@@ -69,7 +69,7 @@
   gap: 11px;
   padding: 0 16px;
   border-bottom: 1px solid #eff0f4;
-  color: #8b94a5;
+  color: #667085;
 }
 
 .command-search input {
@@ -83,7 +83,11 @@
 }
 
 .command-search input::placeholder {
-  color: #a0a8b5;
+  color: #667085;
+}
+
+.command-search>kbd {
+  color: #667085;
 }
 
 .command-results {
@@ -94,7 +98,7 @@
 
 .command-label {
   margin: 3px 8px 8px;
-  color: #9aa2b0;
+  color: #667085;
   font-size: 9px;
   font-weight: 680;
   letter-spacing: 0.1em;
@@ -115,6 +119,45 @@
   cursor: pointer;
   font-size: 11.5px;
   text-align: left;
+}
+
+.command-result--content {
+  min-height: 48px;
+  align-items: flex-start;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.command-result-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.command-result-copy strong,
+.command-result-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-result-copy strong {
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 580;
+}
+
+.command-result-copy small {
+  color: #626d7d;
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.command-result mark {
+  border-radius: 2px;
+  background: #e9e7ff;
+  color: #4f46b8;
 }
 
 .command-result:hover {
@@ -139,9 +182,48 @@
 
 .command-empty {
   padding: 15px 8px 18px;
-  color: #7d8798;
+  color: #667085;
   font-size: 11px;
   text-align: center;
+}
+
+.command-status,
+.command-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 0;
+  padding: 14px 8px;
+  color: #667085;
+  font-size: 11px;
+  text-align: center;
+}
+
+.command-error {
+  flex-wrap: wrap;
+  color: #a63e3e;
+}
+
+.command-retry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #5149c5;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 620;
+  text-decoration: underline;
+}
+
+.command-spinner {
+  animation: command-spin 900ms linear infinite;
+}
+
+@keyframes command-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .command-footer {
@@ -151,7 +233,7 @@
   justify-content: space-between;
   padding: 0 14px;
   border-top: 1px solid #eff0f4;
-  color: #99a1af;
+  color: #667085;
   font-size: 9px;
 }
 

@@ -12,6 +12,7 @@ import ProjectsView from "../views/ProjectsView.vue";
 import WorkspaceOverview from "../views/WorkspaceOverview.vue";
 import WorkspaceCalendarView from "../views/WorkspaceCalendarView.vue";
 import WorkspaceSettingsView from "../views/WorkspaceSettingsView.vue";
+import AccountSettingsView from "../views/AccountSettingsView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -92,8 +93,26 @@ export const router = createRouter({
           component: WorkspaceSettingsView,
           meta: {
             title: "Settings",
-            description: "Manage your workspace and personal preferences.",
+            description: "Manage the selected workspace.",
           },
+        },
+        {
+          path: "account/profile",
+          name: "account-profile",
+          component: AccountSettingsView,
+          meta: { title: "Profile", description: "Manage your personal account." },
+        },
+        {
+          path: "account/notifications",
+          name: "account-notifications",
+          component: AccountSettingsView,
+          meta: { title: "Notifications", description: "Choose how ORBIT notifies you." },
+        },
+        {
+          path: "account/security",
+          name: "account-security",
+          component: AccountSettingsView,
+          meta: { title: "Security", description: "Manage your password and sessions." },
         },
       ],
     },

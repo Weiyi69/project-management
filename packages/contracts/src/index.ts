@@ -29,6 +29,34 @@ export interface AuthResponse {
   user: AuthenticatedUser;
 }
 
+export interface AccountProfile {
+  id: string;
+  name: string;
+  email: string;
+  pendingEmail: string | null;
+  emailVerifiedAt: string | null;
+  createdAt: string;
+  hasProfilePhoto: boolean;
+}
+
+export type NotificationPreferenceType =
+  | "TASK_ASSIGNED"
+  | "TASK_MENTIONED"
+  | "COMMENT_ADDED"
+  | "DUE_DATE_REMINDER"
+  | "PROJECT_UPDATED"
+  | "INVITATION_RECEIVED";
+
+export interface NotificationPreference {
+  type: NotificationPreferenceType;
+  inApp: boolean;
+  email: boolean;
+}
+
+export interface NotificationPreferencesResponse {
+  preferences: NotificationPreference[];
+}
+
 export type ProjectLifecycle =
   | "PLANNING"
   | "ACTIVE"
@@ -62,6 +90,26 @@ export interface ProjectResponse {
 
 export interface ProjectsResponse {
   projects: ProjectSummary[];
+}
+
+export interface GlobalSearchProject {
+  id: string;
+  name: string;
+  description: string | null;
+  workspace: Pick<WorkspaceSummary, "id" | "name">;
+}
+
+export interface GlobalSearchTask {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  project: { id: string; name: string };
+}
+
+export interface GlobalSearchResponse {
+  projects: GlobalSearchProject[];
+  tasks: GlobalSearchTask[];
 }
 
 export type TaskPriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
@@ -236,6 +284,8 @@ export interface NotificationSummary {
   readAt: string | null;
   actor: Pick<AuthenticatedUser, "id" | "name"> | null;
   task: { title: string; projectId: string; projectName: string } | null;
+  project: { id: string; name: string } | null;
+  workspaceInvitation: { id: string; workspaceId: string; workspaceName: string } | null;
 }
 
 export interface NotificationsResponse {

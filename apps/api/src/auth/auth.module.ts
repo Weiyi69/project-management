@@ -11,5 +11,6 @@ import { AuthService } from "./auth.service";
   imports: [EmailModule, PrismaModule, RateLimitModule, RealtimeModule],
   controllers: [AuthController],
   providers: [AuthService, AuthGuard],
+  exports: [AuthGuard],
 })
 export class AuthModule {}
