@@ -219,11 +219,20 @@
   }
 
   .workspace-calendar-heading {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
     align-items: flex-start;
-    flex-wrap: wrap;
+  }
+
+  .workspace-calendar-heading > * {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .workspace-calendar-heading .button {
+    justify-self: start;
     min-height: 34px;
     gap: 5px;
     padding: 0 9px;
