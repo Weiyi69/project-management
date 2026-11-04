@@ -24,16 +24,26 @@ const OTP_LIFETIME_MS = 10 * 60 * 1000;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
 
-type AuthCodePurpose = "EMAIL_VERIFICATION" | "PASSWORD_RESET";
+type AuthCodePurpose = "EMAIL_VERIFICATION" | "PASSWORD_RESET" | "EMAIL_CHANGE";
 type AuthTransaction = Prisma.TransactionClient;
 
+const userSelect = {
+  id: true,
+  name: true,
+  email: true,
+  passwordHash: true,
+  emailVerifiedAt: true,
+  createdAt: true,
+} as const;
+
 const userWithWorkspace = {
+  ...userSelect,
   workspaceMemberships: {
     orderBy: { joinedAt: "asc" as const },
     take: 1,
-    include: { workspace: true },
+    select: { workspace: { select: { id: true, name: true } } },
   },
-};
+} as const;
 
 function matchesOtp(candidate: string, storedHash: string): boolean {
   const candidateHash = Buffer.from(candidate, "hex");
@@ -284,7 +294,7 @@ export class AuthService {
       await this.lockUser(transaction, candidate.id);
       const user = await transaction.user.findUnique({
         where: { id: candidate.id },
-        include: userWithWorkspace,
+        select: userWithWorkspace,
       });
 
       if (!user || !(await argon2.verify(user.passwordHash, input.password))) {
@@ -399,22 +409,12 @@ export class AuthService {
     await transaction.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId}::uuid FOR UPDATE`;
   }
 
-  private findUserByEmail(email: string): Promise<Prisma.UserGetPayload<{}> | null>;
-  private findUserByEmail(
-    email: string,
-    include: typeof userWithWorkspace,
-  ): Promise<Prisma.UserGetPayload<{ include: typeof userWithWorkspace }> | null>;
   private async findUserByEmail(
     email: string,
-    include?: typeof userWithWorkspace,
-  ): Promise<
-    | Prisma.UserGetPayload<{ include: typeof userWithWorkspace }>
-    | Prisma.UserGetPayload<{}>
-    | null
-  > {
+  ): Promise<Prisma.UserGetPayload<{ select: typeof userSelect }> | null> {
     return this.prisma.user.findFirst({
       where: { email: { equals: email, mode: "insensitive" } },
-      ...(include ? { include } : {}),
+      select: userSelect,
     });
   }
 

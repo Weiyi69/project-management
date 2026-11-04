@@ -21,7 +21,16 @@ function parseNotification(value: unknown): NotificationSummary {
       (isRecord(value.task) &&
         typeof value.task.title === "string" &&
         typeof value.task.projectId === "string" &&
-        typeof value.task.projectName === "string"))
+        typeof value.task.projectName === "string")) ||
+    !(value.project === null ||
+      (isRecord(value.project) &&
+        typeof value.project.id === "string" &&
+        typeof value.project.name === "string")) ||
+    !(value.workspaceInvitation === null ||
+      (isRecord(value.workspaceInvitation) &&
+        typeof value.workspaceInvitation.id === "string" &&
+        typeof value.workspaceInvitation.workspaceId === "string" &&
+        typeof value.workspaceInvitation.workspaceName === "string"))
   ) {
     throw new Error("The notifications API returned an invalid notification.");
   }
@@ -54,6 +63,18 @@ function parseNotification(value: unknown): NotificationSummary {
             title: value.task.title as string,
             projectId: value.task.projectId as string,
             projectName: value.task.projectName as string,
+          },
+    project:
+      value.project === null
+        ? null
+        : { id: value.project.id as string, name: value.project.name as string },
+    workspaceInvitation:
+      value.workspaceInvitation === null
+        ? null
+        : {
+            id: value.workspaceInvitation.id as string,
+            workspaceId: value.workspaceInvitation.workspaceId as string,
+            workspaceName: value.workspaceInvitation.workspaceName as string,
           },
   };
 }

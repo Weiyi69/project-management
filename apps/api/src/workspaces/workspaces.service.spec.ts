@@ -2,6 +2,7 @@ import "reflect-metadata";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ActivityService } from "../activity/activity.service";
+import type { NotificationsService } from "../notifications/notifications.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { RealtimeGateway } from "../realtime/realtime.gateway";
 import type { EmailService } from "./email.service";
@@ -24,6 +25,7 @@ function createService(
     {} as EmailService,
     {} as RealtimeGateway,
     activity,
+    {} as NotificationsService,
   );
 }
 

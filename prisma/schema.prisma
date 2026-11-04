@@ -42,9 +42,18 @@ enum NotificationType {
   INVITATION_RECEIVED
 }
 
+enum NotificationEmailDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
 enum AuthCodePurpose {
   EMAIL_VERIFICATION
   PASSWORD_RESET
+  EMAIL_CHANGE
 }
 
 model User {
@@ -53,6 +62,8 @@ model User {
   email                 String                @unique
   passwordHash          String
   avatarUrl             String?
+  pendingEmail          String?
+  profilePhotoBytes     Bytes?
   emailVerifiedAt       DateTime?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
@@ -69,6 +80,7 @@ model User {
   actedNotifications    Notification[]        @relation("NotificationActor")
   refreshSessions       RefreshSession[]
   authCodes             AuthCode[]
+  notificationPreferences NotificationPreference[]
 
   @@index([name])
 }
@@ -281,13 +293,47 @@ model Notification {
   type        NotificationType
   entityType  String
   entityId    String           @db.Uuid
+  eventKey    String?          @unique
+  inApp       Boolean          @default(true)
   readAt      DateTime?
   createdAt   DateTime         @default(now())
   recipient   User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
   actor       User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  emailDelivery NotificationEmailDelivery?
 
   @@index([recipientId, readAt, createdAt])
   @@index([entityType, entityId])
+}
+
+model NotificationPreference {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  inApp     Boolean          @default(true)
+  email     Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId])
+}
+
+model NotificationEmailDelivery {
+  id             String                          @id @default(uuid()) @db.Uuid
+  notificationId String                          @unique @db.Uuid
+  status         NotificationEmailDeliveryStatus @default(PENDING)
+  attemptCount   Int                             @default(0)
+  attemptedAt    DateTime?
+  nextAttemptAt  DateTime                        @default(now())
+  leaseExpiresAt DateTime?
+  claimToken     String?                         @db.Uuid
+  sentAt         DateTime?
+  failureCode    String?
+  createdAt      DateTime                        @default(now())
+  notification   Notification                    @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
 }
 
 model RefreshSession {

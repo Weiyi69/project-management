@@ -17,13 +17,22 @@ export class AuthGuard implements CanActivate {
 
     const session = await this.prisma.refreshSession.findUnique({
       where: { tokenHash: hashSessionToken(token) },
-      include: {
+      select: {
+        id: true,
+        userId: true,
+        tokenHash: true,
+        expiresAt: true,
+        revokedAt: true,
         user: {
-          include: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            emailVerifiedAt: true,
             workspaceMemberships: {
               orderBy: { joinedAt: "asc" },
               take: 1,
-              include: { workspace: true },
+              select: { workspace: { select: { id: true, name: true } } },
             },
           },
         },

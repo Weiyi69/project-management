@@ -46,6 +46,9 @@ const routeTitles = new Map<string, string>([
   ["calendar", "Calendar"],
   ["analytics", "Analytics"],
   ["settings", "Settings"],
+  ["account-profile", "Profile"],
+  ["account-notifications", "Notifications"],
+  ["account-security", "Security"],
 ]);
 
 function openCommand(): void {
@@ -98,6 +101,10 @@ async function openNotification(notification: NotificationSummary): Promise<void
     notificationsOpen.value = false;
     if (notification.task) {
       await router.push({ name: "project-detail", params: { projectId: notification.task.projectId } });
+    } else if (notification.project) {
+      await router.push({ name: "project-detail", params: { projectId: notification.project.id } });
+    } else if (notification.workspaceInvitation) {
+      await router.push({ name: "overview" });
     }
   } catch (caught) {
     notificationError.value =
@@ -259,7 +266,12 @@ function selectWorkspace(workspaceId: string): void {
         </div>
 
         <div class="topbar-actions">
-          <button class="search-trigger" type="button" @click="openCommand">
+          <button
+            class="search-trigger"
+            type="button"
+            aria-label="Search anything K"
+            @click="openCommand"
+          >
             <Search :size="16" />
             <span>Search anything</span>
             <kbd><Command :size="11" /> K</kbd>
@@ -311,7 +323,7 @@ function selectWorkspace(workspaceId: string): void {
                     <span class="notification-item-dot" aria-hidden="true"></span>
                     <span class="notification-item-copy">
                       <span>{{ notificationMessage(notification) }}</span>
-                      <small>{{ notification.task?.projectName ?? "ORBIT" }}</small>
+                      <small>{{ notification.task?.projectName ?? notification.workspaceInvitation?.workspaceName ?? "ORBIT" }}</small>
                     </span>
                   </button>
                 </li>
@@ -348,7 +360,7 @@ function selectWorkspace(workspaceId: string): void {
                 }}</span>
                 <div><strong>{{ auth.user.name }}</strong><span>{{ auth.user.email }}</span></div>
               </div>
-              <RouterLink class="popover-link" :to="{ name: 'settings' }" @click="profileOpen = false">
+              <RouterLink class="popover-link" :to="{ name: 'account-profile' }" @click="profileOpen = false">
                 <UserRound :size="16" /> Profile
               </RouterLink>
               <RouterLink class="popover-link" :to="{ name: 'settings' }" @click="profileOpen = false">

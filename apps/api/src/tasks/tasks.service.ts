@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { ActivityService } from "../activity/activity.service";
 import { Prisma } from "../generated/prisma/client";
 import type { TaskPriority as TaskPriorityContract } from "@orbit/contracts";
@@ -17,6 +18,7 @@ import type {
   TaskDetail,
   TaskSummary,
   TaskWorkspaceMember,
+  WorkspaceCalendarResponse,
 } from "@orbit/contracts";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -40,6 +42,15 @@ const taskInclude = {
 } satisfies Prisma.TaskInclude;
 
 type IncludedTask = Prisma.TaskGetPayload<{ include: typeof taskInclude }>;
+
+const workspaceCalendarTaskInclude = {
+  ...taskInclude,
+  project: { select: { id: true, name: true } },
+} satisfies Prisma.TaskInclude;
+
+type IncludedWorkspaceCalendarTask = Prisma.TaskGetPayload<{
+  include: typeof workspaceCalendarTaskInclude;
+}>;
 
 const assignedTaskInclude = {
   ...taskInclude,
@@ -96,6 +107,68 @@ export class TasksService {
           taskCount: label._count.tasks,
         }),
       ),
+    };
+  }
+
+  async listWorkspaceCalendarTasks(
+    userId: string,
+    workspaceId: string,
+    startDate: string | undefined,
+    endDate: string | undefined,
+  ): Promise<WorkspaceCalendarResponse> {
+    await this.workspaceAccess.requireMembership(workspaceId, userId);
+
+    const start = this.parseCalendarDate(startDate, "startDate");
+    const end = this.parseCalendarDate(endDate, "endDate");
+    if (start > end) {
+      throw new BadRequestException("The calendar start date must be on or before its end date.");
+    }
+
+    const endExclusive = new Date(end);
+    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+    const [workspace, records] = await Promise.all([
+      this.prisma.workspace.findFirst({
+        where: { id: workspaceId, members: { some: { userId } } },
+        select: {
+          projects: {
+            where: { workspaceId },
+            select: {
+              id: true,
+              name: true,
+              statuses: {
+                select: { id: true, name: true, color: true, position: true },
+                orderBy: { position: "asc" },
+              },
+            },
+            orderBy: { name: "asc" },
+          },
+          members: {
+            select: { user: { select: { id: true, name: true, email: true } } },
+            orderBy: { user: { name: "asc" } },
+          },
+        },
+      }),
+      this.prisma.task.findMany({
+        where: {
+          dueDate: { gte: start, lt: endExclusive },
+          project: {
+            workspaceId,
+            workspace: { members: { some: { userId } } },
+          },
+        },
+        include: workspaceCalendarTaskInclude,
+        orderBy: [{ dueDate: "asc" }, { title: "asc" }],
+      }),
+    ]);
+
+    if (!workspace) {
+      throw new NotFoundException("Workspace not found.");
+    }
+
+    return {
+      tasks: records.map((task) => this.toWorkspaceCalendarTask(task)),
+      projects: workspace.projects,
+      members: workspace.members.map(({ user }) => user),
     };
   }
 
@@ -241,7 +314,7 @@ export class TasksService {
     await this.requireLabels(projectId, input.labelIds ?? []);
     const position = await this.nextPosition(projectId, input.statusId);
 
-    const { task, notification } = await this.prisma.$transaction(async (transaction) => {
+    const { task, notification, projectUpdates } = await this.prisma.$transaction(async (transaction) => {
       const createdTask = await transaction.task.create({
         data: {
           projectId,
@@ -288,10 +361,18 @@ export class TasksService {
           createdTask.id,
           createdTask.assigneeId,
         ),
+        projectUpdates: await this.notifications.createProjectUpdateNotifications(
+          transaction,
+          userId,
+          "TASK",
+          createdTask.id,
+          randomUUID(),
+        ),
       };
     });
 
-    if (notification) this.notifications.publishCreated(notification);
+    if (notification) await this.notifications.publishCreated(notification);
+    for (const projectUpdate of projectUpdates) await this.notifications.publishCreated(projectUpdate);
     this.realtime.publishTaskEvent({
       projectId,
       taskId: task.id,
@@ -349,7 +430,7 @@ export class TasksService {
           }
         : {}),
     };
-    const { updated, notification } = await this.prisma.$transaction(async (transaction) => {
+    const { updated, notification, projectUpdates } = await this.prisma.$transaction(async (transaction) => {
       const savedTask = await transaction.task.update({
         where: { id: taskId },
         data,
@@ -364,6 +445,28 @@ export class TasksService {
               savedTask.assigneeId,
             )
           : undefined;
+      const dueDateChanged =
+        input.dueDate !== undefined &&
+        savedTask.dueDate?.getTime() !== task.dueDate?.getTime();
+      const priorityChanged =
+        input.priority !== undefined && savedTask.priority !== task.priority;
+      const projectUpdates =
+        statusChanged || dueDateChanged || priorityChanged
+          ? await this.notifications.createProjectUpdateNotifications(
+              transaction,
+              userId,
+              "TASK",
+              taskId,
+              randomUUID(),
+            )
+          : [];
+      const assigneeChanged =
+        input.assigneeId !== undefined && savedTask.assigneeId !== task.assigneeId;
+      if (dueDateChanged || assigneeChanged || (statusChanged &&
+        (savedTask.status.isCompleted ||
+          ["cancelled", "canceled"].includes(savedTask.status.name.trim().toLowerCase())))) {
+        await this.notifications.invalidateTaskReminders(transaction, taskId);
+      }
       if (statusChanged) {
         await this.activity.record(transaction, {
           workspaceId: project.workspaceId,
@@ -390,7 +493,7 @@ export class TasksService {
           metadata: { title: savedTask.title },
         });
       }
-      if (input.priority !== undefined && input.priority !== task.priority) {
+      if (priorityChanged) {
         await this.activity.record(transaction, {
           workspaceId: project.workspaceId,
           projectId: task.projectId,
@@ -405,10 +508,11 @@ export class TasksService {
           },
         });
       }
-      return { updated: savedTask, notification: assignmentNotification };
+      return { updated: savedTask, notification: assignmentNotification, projectUpdates };
     });
 
-    if (notification) this.notifications.publishCreated(notification);
+    if (notification) await this.notifications.publishCreated(notification);
+    for (const projectUpdate of projectUpdates) await this.notifications.publishCreated(projectUpdate);
     this.realtime.publishTaskEvent({
       projectId: task.projectId,
       taskId,
@@ -456,7 +560,7 @@ export class TasksService {
         ),
       };
     });
-    for (const notification of notifications) this.notifications.publishCreated(notification);
+    for (const notification of notifications) await this.notifications.publishCreated(notification);
     this.realtime.publishTaskEvent({
       projectId: task.projectId,
       taskId,
@@ -727,8 +831,31 @@ export class TasksService {
     return value ? new Date(value) : null;
   }
 
+  private parseCalendarDate(value: string | undefined, fieldName: string): Date {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`The calendar ${fieldName} must use YYYY-MM-DD format.`);
+    }
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+      throw new BadRequestException(`The calendar ${fieldName} is invalid.`);
+    }
+    return date;
+  }
+
   private dateOnly(value: Date | null): string | null {
     return value?.toISOString().slice(0, 10) ?? null;
+  }
+
+  private toWorkspaceCalendarTask(task: IncludedWorkspaceCalendarTask): WorkspaceCalendarResponse["tasks"][number] {
+    const summary = this.toSummary(task);
+    if (!summary.dueDate) {
+      throw new Error("The calendar task query returned a task without a due date.");
+    }
+    return {
+      ...summary,
+      dueDate: summary.dueDate,
+      project: task.project,
+    };
   }
 
   private toSummary(task: IncludedTask): TaskSummary {

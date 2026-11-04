@@ -174,6 +174,8 @@ test("authenticates sessions, authorizes project rooms, and broadcasts task/pres
     readAt: null,
     actor: { id: userId, name: "Test User" },
     task: { title: "Test task", projectId, projectName: "Test project" },
+    project: null,
+    workspaceInvitation: null,
   };
   const notificationEvent = waitFor<typeof notification>(client, "notification:new");
   gateway.publishNotification(userId, notification);

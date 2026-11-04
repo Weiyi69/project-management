@@ -7,10 +7,13 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
-async function assertWcagAa(page: import("@playwright/test").Page): Promise<void> {
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
+async function assertWcagAa(
+  page: import("@playwright/test").Page,
+  include?: string,
+): Promise<void> {
+  let axe = new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]);
+  if (include) axe = axe.include(include);
+  const results = await axe.analyze();
   expect(
     results.violations.map(({ id, impact, description, nodes }) => ({
       id,
@@ -22,6 +25,7 @@ async function assertWcagAa(page: import("@playwright/test").Page): Promise<void
 }
 
 test("registers, creates project work, and loads accessible analytics", async ({ page }) => {
+  test.setTimeout(180_000);
   const navigationDurations: Record<string, number> = {};
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const email = `quality-browser-${suffix}@example.test`;
@@ -115,6 +119,25 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await expect(page.getByRole("link", { name: "Invite team members" })).toBeVisible();
   await assertWcagAa(page);
 
+  let releaseEmptyCalendar!: () => void;
+  const heldEmptyCalendarResponse = new Promise<void>((resolve) => {
+    releaseEmptyCalendar = resolve;
+  });
+  const calendarEndpoint = /\/api\/v1\/workspaces\/[^/]+\/calendar\/tasks/;
+  await page.route(calendarEndpoint, async (route) => {
+    await heldEmptyCalendarResponse;
+    await route.continue();
+  });
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await expect(page.getByText("Loading workspace calendar")).toBeVisible();
+  releaseEmptyCalendar();
+  await expect(page.getByRole("heading", { name: "No tasks to show" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create task" })).toBeDisabled();
+  await assertWcagAa(page);
+  await page.unroute(calendarEndpoint);
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(onboardingHeading).toBeVisible();
+
   await page.getByRole("link", { name: "Projects", exact: true }).click();
   let releaseProjects!: () => void;
   const heldProjectsResponse = new Promise<void>((resolve) => {
@@ -202,10 +225,193 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await addTaskButton.click();
   await taskDialog.getByLabel("Title").fill("Verify keyboard task workflow");
   await taskDialog.getByLabel("Assignee").selectOption({ index: 1 });
+  const calendarDueDate = await page.evaluate(() => {
+    const date = new Date();
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+  });
+  await taskDialog.getByLabel("Due date").fill(calendarDueDate);
   const taskStartedAt = performance.now();
   await taskDialog.getByRole("button", { name: "Create task" }).click();
   await expect(page.getByText("Verify keyboard task workflow", { exact: true })).toBeVisible();
   navigationDurations.taskCreation = performance.now() - taskStartedAt;
+
+  const searchTrigger = page.getByRole("button", { name: "Search anything K" });
+  const palette = page.getByRole("dialog", { name: "Search ORBIT" });
+  const searchInput = page.getByRole("searchbox", {
+    name: "Search projects, tasks, and pages",
+  });
+  let contentSearchRequests = 0;
+  const countSearchRequests = (request: import("@playwright/test").Request) => {
+    if (new URL(request.url()).pathname === "/api/v1/search") contentSearchRequests += 1;
+  };
+  page.on("request", countSearchRequests);
+  await searchTrigger.click();
+  await expect(searchInput).toBeFocused();
+  await searchInput.fill("q");
+  await expect(page.getByText("Type at least 2 characters to search projects and tasks.")).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(contentSearchRequests).toBe(0);
+  await searchInput.fill(`quality browser project ${suffix}`);
+  const projectResult = page.getByRole("option", {
+    name: new RegExp(`Quality browser project ${suffix}`),
+  });
+  await expect(page.getByRole("group", { name: "Projects" })).toBeVisible();
+  await expect(projectResult).toBeVisible();
+  await expect(projectResult.locator("mark")).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await expect(palette).toBeHidden();
+  await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+
+  await searchTrigger.click();
+  await searchInput.fill("Verify keyboard task workflow");
+  const taskResult = page.getByRole("option", {
+    name: /Verify keyboard task workflow/,
+  });
+  await expect(page.getByRole("group", { name: "Tasks" })).toBeVisible();
+  await expect(taskResult).toBeVisible();
+  await taskResult.click();
+  await expect(page).toHaveURL(/\/projects\/[^/]+\?task=/);
+  await expect(page.getByRole("dialog", { name: "Edit task" })).toBeVisible();
+  await page.getByRole("button", { name: "Close task dialog" }).click();
+
+  let releaseStaleSearch!: () => void;
+  const staleSearchHold = new Promise<void>((resolve) => {
+    releaseStaleSearch = resolve;
+  });
+  let staleRequestSeen!: () => void;
+  const staleSearchRequested = new Promise<void>((resolve) => {
+    staleRequestSeen = resolve;
+  });
+  let retryCount = 0;
+  await page.route("**/api/v1/search**", async (route) => {
+    const searchTerm = new URL(route.request().url()).searchParams.get("q");
+    if (searchTerm === "slowquery") {
+      staleRequestSeen();
+      await staleSearchHold;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          projects: [{
+            id: "stale-project",
+            name: "Slow stale result",
+            description: null,
+            workspace: { id: "workspace-1", name: "Workspace" },
+          }],
+          tasks: [],
+        }),
+      });
+    } else if (searchTerm === "freshquery") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          projects: [{
+            id: "fresh-project",
+            name: "Fresh search result",
+            description: null,
+            workspace: { id: "workspace-1", name: "Workspace" },
+          }],
+          tasks: [],
+        }),
+      });
+    } else if (searchTerm === "errorquery") {
+      retryCount += 1;
+      if (retryCount === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "Search is temporarily unavailable." }),
+        });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ projects: [], tasks: [] }),
+        });
+      }
+    } else if (searchTerm === "needle") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          projects: [
+            {
+              id: "highlight-project",
+              name: 'needle <img src=x onerror="alert(1)">',
+              description: null,
+              workspace: { id: "workspace-1", name: "Workspace" },
+            },
+            {
+              id: "second-highlight-project",
+              name: "Needle secondary result",
+              description: null,
+              workspace: { id: "workspace-1", name: "Workspace" },
+            },
+          ],
+          tasks: [],
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await searchTrigger.click();
+  await searchInput.fill("slowquery");
+  await staleSearchRequested;
+  await expect(page.getByRole("status").filter({ hasText: "Searching" })).toBeVisible();
+  await searchInput.fill("freshquery");
+  await expect(page.getByRole("option", { name: "Fresh search result" })).toBeVisible();
+  releaseStaleSearch();
+  await expect(page.getByRole("option", { name: "Slow stale result" })).toHaveCount(0);
+
+  await searchInput.fill("errorquery");
+  await expect(page.getByRole("alert").filter({ hasText: "Search is temporarily unavailable." })).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("No results match “errorquery”.")).toBeVisible();
+
+  await searchInput.fill("needle");
+  const highlightedResults = page.getByRole("group", { name: "Projects" });
+  const unsafeTextResult = highlightedResults.getByRole("option", { name: /needle/ }).first();
+  await expect(unsafeTextResult.locator("mark")).toHaveText("needle");
+  await expect(unsafeTextResult.getByRole("img")).toHaveCount(0);
+  await expect(unsafeTextResult.locator("strong")).toContainText(
+    'needle <img src=x onerror="alert(1)">',
+  );
+  await expect(page.getByRole("option", { name: /Needle secondary result/ })).toHaveCount(1);
+  await page.keyboard.press("ArrowDown");
+  await expect(searchInput).toHaveAttribute(
+    "aria-activedescendant",
+    "command-result-project-second-highlight-project",
+  );
+  await page.keyboard.press("ArrowUp");
+  await expect(searchInput).toHaveAttribute(
+    "aria-activedescendant",
+    "command-result-project-highlight-project",
+  );
+  await assertWcagAa(page, ".command-dialog");
+  await page.keyboard.press("Escape");
+  await expect(palette).toBeHidden();
+  await searchTrigger.click();
+  await page.locator(".command-backdrop").click({ position: { x: 4, y: 4 } });
+  await expect(palette).toBeHidden();
+  await page.unroute("**/api/v1/search**");
+  page.off("request", countSearchRequests);
+
+  await searchTrigger.click();
+  await searchInput.fill("no-such-result-zq");
+  await expect(page.getByText("No results match “no-such-result-zq”.")).toBeVisible();
+  await searchInput.fill("analytics");
+  await expect(page.getByRole("group", { name: "Pages" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Analytics" })).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/analytics$/);
 
   const myTasksStartedAt = performance.now();
   await page.getByRole("link", { name: "My tasks", exact: true }).click();
@@ -237,12 +443,151 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await expect(page.getByRole("dialog", { name: "Create task" })).toBeVisible();
   await page.getByRole("button", { name: "Close task dialog" }).click();
 
+  let releaseCalendar!: () => void;
+  const heldCalendarResponse = new Promise<void>((resolve) => {
+    releaseCalendar = resolve;
+  });
+  await page.route(calendarEndpoint, async (route) => {
+    await heldCalendarResponse;
+    await route.continue();
+  });
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await expect(page.getByText("Loading workspace calendar")).toBeVisible();
+  releaseCalendar();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+  await page.unroute(calendarEndpoint);
+
+  const calendarPeriod = page.locator(".workspace-calendar-period h2");
+  const initialCalendarPeriod = await calendarPeriod.textContent();
+  await page.getByRole("button", { name: "Next period" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(calendarPeriod).not.toHaveText(initialCalendarPeriod ?? "");
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(calendarPeriod).toHaveText(initialCalendarPeriod ?? "");
+  await page.getByRole("button", { name: "Today" }).click();
+  await assertWcagAa(page);
+
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  await expect(page.locator(".workspace-calendar-week-day")).toHaveCount(7);
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Day", exact: true }).click();
+  await expect(page.locator(".workspace-calendar-single-day")).toBeVisible();
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Today" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Agenda", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Agenda view" })).toBeVisible();
+  const agendaPeriod = await calendarPeriod.textContent();
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(calendarPeriod).not.toHaveText(agendaPeriod ?? "");
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(calendarPeriod).toHaveText(agendaPeriod ?? "");
+  await page.getByLabel("Filter by project").selectOption({ label: `Quality browser project ${suffix}` });
+  await page.getByLabel("Filter by status").selectOption({
+    label: `Quality browser project ${suffix} · To do`,
+  });
+  await page.getByLabel("Filter by priority").selectOption("MEDIUM");
+  await page.getByLabel("Filter by assignee").selectOption({ label: "Quality Browser User" });
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+  await page.getByLabel("Filter by priority").selectOption("HIGH");
+  await expect(page.getByRole("heading", { name: "No tasks to show" })).toBeVisible();
+  await page.getByLabel("Filter by priority").selectOption("MEDIUM");
+  await page.getByLabel("Filter by assignee").selectOption("__unassigned__");
+  await expect(page.getByRole("heading", { name: "No tasks to show" })).toBeVisible();
+  await page
+    .getByRole("region", { name: "Calendar filters" })
+    .getByRole("button", { name: "Clear filters" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Month", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const monthColumnCount = await page
+    .locator(".workspace-calendar-month-grid")
+    .evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length);
+  expect(monthColumnCount).toBe(1);
+  const mobileOverflow = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    overflowingElements: [...document.querySelectorAll("body *")]
+      .map((element) => ({
+        element: `${element.tagName.toLowerCase()}${typeof element.className === "string" && element.className
+          ? `.${element.className.trim().replace(/\s+/g, ".")}`
+          : ""}`,
+        right: Math.round(element.getBoundingClientRect().right),
+      }))
+      .filter(({ right }) => right > window.innerWidth + 1)
+      .slice(0, 5),
+  }));
+  expect(mobileOverflow.documentWidth, JSON.stringify(mobileOverflow)).toBeLessThanOrEqual(
+    mobileOverflow.viewportWidth,
+  );
+  await assertWcagAa(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  await page.getByRole("link", { name: `Open project Quality browser project ${suffix}` }).click();
+  await expect(page).toHaveURL(/\/projects\/[^/?]+$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }).click();
+  await expect(page).toHaveURL(/\/projects\/[^/]+\?task=/);
+  await expect(page.getByRole("dialog", { name: "Edit task" })).toBeVisible();
+  await page.getByRole("button", { name: "Close task dialog" }).click();
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Create task" }).click();
+  await expect(page.getByRole("dialog", { name: "Create task" })).toBeVisible();
+  await page.getByRole("button", { name: "Close task dialog" }).click();
+
   const analyticsStartedAt = performance.now();
   await page.getByRole("link", { name: "Analytics", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Analytics" })).toBeVisible();
   await expect(page.getByTitle(`Quality browser project ${suffix}`)).toBeVisible();
   navigationDurations.analytics = performance.now() - analyticsStartedAt;
   await assertWcagAa(page);
+
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("link", { name: "Profile", exact: true }).click();
+  await expect(page).toHaveURL(/\/account\/profile$/);
+  await expect(page.getByRole("heading", { name: "Account settings" })).toBeVisible();
+  await expect(page.getByLabel("Display name")).toHaveValue("Quality Browser User");
+  await expect(page.getByRole("link", { name: "Workspace settings" })).toBeVisible();
+  await assertWcagAa(page);
+
+  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  await expect(page).toHaveURL(/\/account\/notifications$/);
+  await expect(page.getByRole("heading", { name: "Notification preferences" })).toBeVisible();
+  await expect(page.getByLabel("Task assignments email notifications")).toBeVisible();
+  await assertWcagAa(page);
+
+  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await expect(page).toHaveURL(/\/account\/security$/);
+  await expect(page.getByRole("heading", { name: "Active sessions" })).toBeVisible();
+  await expect(page.getByText("This browser", { exact: true })).toBeVisible();
+  await assertWcagAa(page);
+
+  await page.getByRole("link", { name: "Workspace settings", exact: true }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole("heading", { name: "Workspace settings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Members and roles" })).toBeVisible();
 
   const report = {
     source: "Playwright core workflow run",

@@ -10,6 +10,8 @@ import type {
   TaskResponse,
   TaskSummary,
   TaskWorkspaceMember,
+  WorkspaceCalendarResponse,
+  WorkspaceCalendarTask,
 } from "@orbit/contracts";
 
 export class TaskApiError extends Error {
@@ -234,6 +236,85 @@ function parseProjectTasks(value: unknown): ProjectTasksResponse {
   };
 }
 
+function parseWorkspaceCalendar(value: unknown): WorkspaceCalendarResponse {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.tasks) ||
+    !Array.isArray(value.projects) ||
+    !Array.isArray(value.members)
+  ) {
+    throw new Error("The tasks API returned an invalid workspace calendar.");
+  }
+
+  const projects = value.projects.map((project) => {
+    if (
+      !isRecord(project) ||
+      typeof project.id !== "string" ||
+      typeof project.name !== "string" ||
+      !Array.isArray(project.statuses)
+    ) {
+      throw new Error("The tasks API returned invalid workspace calendar project metadata.");
+    }
+
+    return {
+      id: project.id,
+      name: project.name,
+      statuses: project.statuses.map((status) => {
+        if (
+          !isRecord(status) ||
+          typeof status.id !== "string" ||
+          typeof status.name !== "string" ||
+          typeof status.color !== "string" ||
+          typeof status.position !== "number"
+        ) {
+          throw new Error("The tasks API returned invalid workspace calendar status metadata.");
+        }
+        return {
+          id: status.id,
+          name: status.name,
+          color: status.color,
+          position: status.position,
+        };
+      }),
+    };
+  });
+
+  const members = value.members.map((member): TaskWorkspaceMember => {
+    if (
+      !isRecord(member) ||
+      typeof member.id !== "string" ||
+      typeof member.name !== "string" ||
+      typeof member.email !== "string"
+    ) {
+      throw new Error("The tasks API returned invalid workspace calendar member metadata.");
+    }
+    return { id: member.id, name: member.name, email: member.email };
+  });
+
+  const tasks = value.tasks.map((item): WorkspaceCalendarTask => {
+    if (
+      !isRecord(item) ||
+      typeof item.dueDate !== "string" ||
+      !isRecord(item.project) ||
+      typeof item.project.id !== "string" ||
+      typeof item.project.name !== "string"
+    ) {
+      throw new Error("The tasks API returned invalid workspace calendar task metadata.");
+    }
+    const task = parseTask(item);
+    if (task.dueDate !== item.dueDate || item.project.id !== task.projectId) {
+      throw new Error("The tasks API returned a workspace calendar task with inconsistent dates or project metadata.");
+    }
+    return {
+      ...task,
+      dueDate: item.dueDate,
+      project: { id: item.project.id, name: item.project.name },
+    };
+  });
+
+  return { tasks, projects, members };
+}
+
 function parseMyTasks(value: unknown): MyTasksResponse {
   if (!isRecord(value) || !Array.isArray(value.tasks)) {
     throw new Error("The tasks API returned an invalid assigned task list.");
@@ -336,6 +417,18 @@ export const taskApi = {
   async list(projectId: string): Promise<ProjectTasksResponse> {
     return parseProjectTasks(
       await request(`/projects/${encodeURIComponent(projectId)}/tasks`),
+    );
+  },
+  async workspaceCalendar(
+    workspaceId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<WorkspaceCalendarResponse> {
+    const query = new URLSearchParams({ startDate, endDate });
+    return parseWorkspaceCalendar(
+      await request(
+        `/workspaces/${encodeURIComponent(workspaceId)}/calendar/tasks?${query.toString()}`,
+      ),
     );
   },
   async get(taskId: string): Promise<TaskDetail> {

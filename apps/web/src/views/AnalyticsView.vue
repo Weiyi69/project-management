@@ -140,7 +140,7 @@ watch(
     </div>
 
     <template v-else-if="report">
-      <section class="analytics-metrics" aria-label="Workspace metrics">
+      <section class="analytics-metrics analytics-metrics--with-icons" aria-label="Workspace metrics">
         <article class="analytics-metric-card">
           <span class="analytics-metric-icon"><FolderKanban :size="17" /></span>
           <span class="analytics-metric-label">Projects</span>

@@ -10,6 +10,8 @@ import type {
   ProjectLifecycle as ProjectLifecycleContract,
 } from "@orbit/contracts";
 import { ProjectLifecycle } from "../generated/prisma/enums";
+import { randomUUID } from "node:crypto";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { WorkspaceAccessService } from "../workspaces/workspace-access.service";
 
@@ -19,6 +21,7 @@ export class ProjectsService {
     private readonly prisma: PrismaService,
     private readonly workspaceAccess: WorkspaceAccessService,
     private readonly activity: ActivityService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async listProjects(userId: string, workspaceId?: string): Promise<ProjectSummary[]> {
@@ -180,7 +183,7 @@ export class ProjectsService {
     }
     await this.requireProjectManager(userId, projectId, accessibleProject.workspaceId);
 
-    const project = await this.prisma.$transaction(async (transaction) => {
+    const { project, notifications } = await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.project.update({
         where: { id: projectId },
         data: {
@@ -228,9 +231,21 @@ export class ProjectsService {
           metadata: { name: updated.name, changedFields },
         });
       }
-      return updated;
+      return {
+        project: updated,
+        notifications: changedFields.length
+          ? await this.notifications.createProjectUpdateNotifications(
+              transaction,
+              userId,
+              "PROJECT",
+              projectId,
+              randomUUID(),
+            )
+          : [],
+      };
     });
 
+    for (const notification of notifications) await this.notifications.publishCreated(notification);
     return this.toSummary(project);
   }
 

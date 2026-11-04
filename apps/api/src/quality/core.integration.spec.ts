@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -7,8 +8,10 @@ import { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import sharp from "sharp";
 import { AppModule } from "../app.module";
-import { takeTestEmails } from "../email/email.service";
+import { EmailDeliveryError, EmailService, takeTestEmails } from "../email/email.service";
+import { NotificationsService, type CreatedNotification } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RateLimitService } from "../rate-limits/rate-limit.service";
 import { hashRateLimitKey } from "../auth/auth-crypto";
@@ -91,7 +94,7 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   const response = await fetch(`${baseUrl}/api/v1${path}`, {
     ...init,
     headers: {
-      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(init.body && !(init.body instanceof FormData) ? { "content-type": "application/json" } : {}),
       ...init.headers,
     },
   });
@@ -147,6 +150,7 @@ test("authenticated core workflow persists data and enforces workspace boundarie
 
   const anonymousMe = await request("/auth/me");
   assert.equal(anonymousMe.status, 401);
+  assert.equal((await request("/search?q=anything")).status, 401);
 
   const invalidRegistration = await request("/auth/register", {
     method: "POST",
@@ -270,7 +274,10 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   const createdProjectResponse = await request("/projects", {
     method: "POST",
     headers: { cookie: ownerCookie, "x-workspace-id": ownerData.user.workspaceId },
-    body: JSON.stringify({ name: "Quality integration project" }),
+    body: JSON.stringify({
+      name: "Quality integration project",
+      description: "SearchableProjectDescriptionMarker",
+    }),
   });
   assert.equal(createdProjectResponse.status, 201);
   const projectData = (await createdProjectResponse.json()) as {
@@ -287,13 +294,167 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     headers: { cookie: ownerCookie },
     body: JSON.stringify({
       title: "Verify persisted workflow",
+      description: "SearchableTaskDescriptionMarker",
       statusId: todoStatus.id,
       assigneeId: ownerRecord.id,
       dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
     }),
   });
   assert.equal(createdTaskResponse.status, 201);
-  const taskData = (await createdTaskResponse.json()) as { task: { id: string } };
+  const taskData = (await createdTaskResponse.json()) as {
+    task: { id: string; dueDate: string | null };
+  };
+  assert.ok(taskData.task.dueDate);
+
+  const projectNameSearch = await request("/search?q=QUALITY%20INTEGRATION", {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(projectNameSearch.status, 200);
+  const projectNameResults = (await projectNameSearch.json()) as {
+    projects: Array<{ id: string }>;
+  };
+  assert.deepEqual(projectNameResults.projects.map(({ id }) => id), [projectId]);
+  const projectDescriptionSearch = await request(
+    "/search?q=searchableprojectdescriptionmarker",
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(projectDescriptionSearch.status, 200);
+  assert.deepEqual(
+    ((await projectDescriptionSearch.json()) as { projects: Array<{ id: string }> }).projects.map(
+      ({ id }) => id,
+    ),
+    [projectId],
+  );
+  const taskTitleSearch = await request("/search?q=workflow", {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(taskTitleSearch.status, 200);
+  const taskTitleResults = (await taskTitleSearch.json()) as {
+    tasks: Array<{ id: string; projectId: string; project: { id: string; name: string } }>;
+  };
+  assert.deepEqual(taskTitleResults.tasks.map(({ id }) => id), [taskData.task.id]);
+  assert.equal(taskTitleResults.tasks[0]?.projectId, projectId);
+  assert.equal(taskTitleResults.tasks[0]?.project.id, projectId);
+  const taskDescriptionSearch = await request(
+    "/search?q=searchabletaskdescriptionmarker",
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(taskDescriptionSearch.status, 200);
+  assert.deepEqual(
+    ((await taskDescriptionSearch.json()) as { tasks: Array<{ id: string }> }).tasks.map(
+      ({ id }) => id,
+    ),
+    [taskData.task.id],
+  );
+  assert.deepEqual(
+    await (
+      await request("/search?q=%20x%20", { headers: { cookie: ownerCookie } })
+    ).json(),
+    { projects: [], tasks: [] },
+  );
+  assert.equal(
+    (await request(`/search?q=${"x".repeat(101)}`, { headers: { cookie: ownerCookie } })).status,
+    400,
+  );
+  await prisma.project.createMany({
+    data: Array.from({ length: 10 }, (_unused, index) => ({
+      workspaceId: ownerWorkspace.id,
+      name: `SearchLimitProject ${index}`,
+      createdBy: ownerRecord.id,
+    })),
+  });
+  await prisma.task.createMany({
+    data: Array.from({ length: 10 }, (_unused, index) => ({
+      projectId,
+      title: `SearchLimitTask ${index}`,
+      statusId: todoStatus.id,
+      reporterId: ownerRecord.id,
+    })),
+  });
+  try {
+    const limitedSearch = await request("/search?q=searchlimit", {
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(limitedSearch.status, 200);
+    const limitedResults = (await limitedSearch.json()) as {
+      projects: Array<{ id: string }>;
+      tasks: Array<{ id: string }>;
+    };
+    assert.equal(limitedResults.projects.length, 8);
+    assert.equal(limitedResults.tasks.length, 8);
+  } finally {
+    await prisma.task.deleteMany({
+      where: { projectId, title: { startsWith: "SearchLimitTask " } },
+    });
+    await prisma.project.deleteMany({
+      where: { workspaceId: ownerWorkspace.id, name: { startsWith: "SearchLimitProject " } },
+    });
+  }
+
+  const undatedTaskResponse = await request(`/projects/${projectId}/tasks`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({
+      title: "Task without a calendar date",
+      statusId: todoStatus.id,
+    }),
+  });
+  assert.equal(undatedTaskResponse.status, 201);
+  const undatedTaskData = (await undatedTaskResponse.json()) as { task: { id: string } };
+  const exactCalendarDate = taskData.task.dueDate.slice(0, 10);
+  const calendarResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${exactCalendarDate}&endDate=${exactCalendarDate}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(calendarResponse.status, 200);
+  const calendarData = (await calendarResponse.json()) as {
+    tasks: Array<{ id: string; dueDate: string; project: { id: string; name: string } }>;
+    projects: Array<{ id: string; statuses: Array<{ id: string; name: string }> }>;
+    members: Array<{ id: string }>;
+  };
+  assert.deepEqual(calendarData.tasks.map(({ id }) => id), [taskData.task.id]);
+  assert.equal(calendarData.tasks[0]?.dueDate, exactCalendarDate);
+  assert.equal(calendarData.tasks[0]?.project.id, projectId);
+  assert.equal(calendarData.projects[0]?.id, projectId);
+  assert.ok(calendarData.projects[0]?.statuses.some(({ id }) => id === todoStatus.id));
+  assert.ok(calendarData.members.some(({ id }) => id === ownerRecord.id));
+  const previousCalendarDate = new Date(`${exactCalendarDate}T00:00:00.000Z`);
+  previousCalendarDate.setUTCDate(previousCalendarDate.getUTCDate() - 1);
+  const outsideCalendarResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${previousCalendarDate.toISOString().slice(0, 10)}&endDate=${previousCalendarDate.toISOString().slice(0, 10)}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(outsideCalendarResponse.status, 200);
+  assert.deepEqual((await outsideCalendarResponse.json()).tasks, []);
+  const undatedCalendarResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${exactCalendarDate}&endDate=${exactCalendarDate}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(undatedCalendarResponse.status, 200);
+  assert.equal(
+    ((await undatedCalendarResponse.json()) as { tasks: Array<{ id: string }> }).tasks.some(
+      ({ id }) => id === undatedTaskData.task.id,
+    ),
+    false,
+  );
+  assert.equal(
+    (
+      await request(`/tasks/${undatedTaskData.task.id}`, {
+        method: "DELETE",
+        headers: { cookie: ownerCookie },
+      })
+    ).status,
+    204,
+  );
+  assert.equal(
+    (
+      await request(
+        `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=2026-02-30&endDate=2026-03-01`,
+        { headers: { cookie: ownerCookie } },
+      )
+    ).status,
+    400,
+  );
 
   const firstWorkspaceActivityResponse = await request(
     `/workspaces/${ownerWorkspace.id}/activity`,
@@ -346,6 +507,16 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   });
   assert.equal(secondTaskResponse.status, 201);
   const secondTaskData = (await secondTaskResponse.json()) as { task: { id: string } };
+  const secondWorkspaceSearch = await request("/search?q=second%20workspace%20plan", {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(secondWorkspaceSearch.status, 200);
+  assert.deepEqual(
+    ((await secondWorkspaceSearch.json()) as { tasks: Array<{ id: string }> }).tasks.map(
+      ({ id }) => id,
+    ),
+    [secondTaskData.task.id],
+  );
 
   const focusToday = new Date();
   const focusTodayKey = focusToday.toISOString().slice(0, 10);
@@ -358,6 +529,31 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     where: { id: secondTaskData.task.id },
     data: { dueDate: new Date(focusTodayStart.getTime() - 24 * 60 * 60 * 1000) },
   });
+  const firstWorkspaceCalendar = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${focusTodayKey}&endDate=${focusTodayKey}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(firstWorkspaceCalendar.status, 200);
+  assert.deepEqual(
+    ((await firstWorkspaceCalendar.json()) as { tasks: Array<{ id: string }> }).tasks.map(
+      ({ id }) => id,
+    ),
+    [taskData.task.id],
+  );
+  const secondWorkspaceDate = new Date(focusTodayStart.getTime() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const secondWorkspaceCalendar = await request(
+    `/workspaces/${secondWorkspaceData.workspace.id}/calendar/tasks?startDate=${secondWorkspaceDate}&endDate=${secondWorkspaceDate}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(secondWorkspaceCalendar.status, 200);
+  assert.deepEqual(
+    ((await secondWorkspaceCalendar.json()) as { tasks: Array<{ id: string }> }).tasks.map(
+      ({ id }) => id,
+    ),
+    [secondTaskData.task.id],
+  );
   const taskFocusResponse = await request(
     `/tasks/assigned/focus?today=${focusTodayKey}`,
     { headers: { cookie: ownerCookie } },
@@ -527,7 +723,22 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   });
   assert.equal(outsiderLogin.status, 200);
   const outsiderCookie = cookieFrom(outsiderLogin);
+  const outsiderSearch = await request("/search?q=searchableprojectdescriptionmarker", {
+    headers: { cookie: outsiderCookie },
+  });
+  assert.equal(outsiderSearch.status, 200);
+  assert.deepEqual(await outsiderSearch.json(), { projects: [], tasks: [] });
+  const outsiderTaskSearch = await request("/search?q=searchabletaskdescriptionmarker", {
+    headers: { cookie: outsiderCookie },
+  });
+  assert.equal(outsiderTaskSearch.status, 200);
+  assert.deepEqual(await outsiderTaskSearch.json(), { projects: [], tasks: [] });
 
+  const outsiderCalendar = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${focusTodayKey}&endDate=${focusTodayKey}`,
+    { headers: { cookie: outsiderCookie } },
+  );
+  assert.equal(outsiderCalendar.status, 404);
   const outsiderActivity = await request(
     `/workspaces/${ownerWorkspace.id}/activity`,
     { headers: { cookie: outsiderCookie } },
@@ -796,6 +1007,16 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     workspace: { id: string };
   };
   assert.equal(acceptedData.workspace.id, ownerWorkspace.id);
+  const invitedMemberSearch = await request("/search?q=searchableprojectdescriptionmarker", {
+    headers: { cookie: inviteeCookie },
+  });
+  assert.equal(invitedMemberSearch.status, 200);
+  assert.deepEqual(
+    ((await invitedMemberSearch.json()) as { projects: Array<{ id: string }> }).projects.map(
+      ({ id }) => id,
+    ),
+    [projectId],
+  );
 
   const secondWorkspaceInvitationResponse = await request(
     `/workspaces/${secondWorkspaceData.workspace.id}/invitations`,
@@ -1197,6 +1418,22 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     await secondPrisma.$disconnect();
   }
 
+  await prisma.workspaceMember.delete({
+    where: { workspaceId_userId: { workspaceId: ownerWorkspace.id, userId: invitedUser.id } },
+  });
+  const removedMemberSearch = await request(
+    "/search?q=searchableprojectdescriptionmarker",
+    { headers: { cookie: inviteeCookie } },
+  );
+  assert.equal(removedMemberSearch.status, 200);
+  assert.deepEqual(await removedMemberSearch.json(), { projects: [], tasks: [] });
+  const removedTaskMemberSearch = await request(
+    "/search?q=searchabletaskdescriptionmarker",
+    { headers: { cookie: inviteeCookie } },
+  );
+  assert.equal(removedTaskMemberSearch.status, 200);
+  assert.deepEqual(await removedTaskMemberSearch.json(), { projects: [], tasks: [] });
+
   const logout = await request("/auth/logout", {
     method: "POST",
     headers: { cookie: inviteeCookie },
@@ -1241,4 +1478,942 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     "utf8",
   );
   console.log(`QUALITY_API_PERFORMANCE_BASELINE ${JSON.stringify(report)}`);
+});
+
+test("personal account settings protect profiles, preferences, photos, and sessions", async () => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const email = `account-owner-${suffix}@example.test`;
+  const newEmail = `account-owner-new-${suffix}@example.test`;
+  const targetEmail = `account-target-${suffix}@example.test`;
+  const newPassword = "quality-suite-password-updated-456";
+  const anonymousProfile = await request("/account");
+  assert.equal(anonymousProfile.status, 401);
+
+  async function createVerifiedUser(userEmail: string, name: string) {
+    const registration = await request("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ name, email: userEmail, password }),
+    });
+    assert.equal(registration.status, 201);
+    const user = await prisma.user.findFirstOrThrow({
+      where: { email: userEmail },
+      select: {
+        id: true,
+        workspaceMemberships: {
+          select: { workspaceId: true, workspace: { select: { id: true } } },
+        },
+      },
+    });
+    createdUserIds.push(user.id);
+    for (const membership of user.workspaceMemberships) {
+      createdWorkspaceIds.push(membership.workspaceId);
+    }
+    const code = codeFromTestEmail(userEmail);
+    const verified = await request("/auth/verify-email", {
+      method: "POST",
+      body: JSON.stringify({ email: userEmail, code }),
+    });
+    assert.equal(verified.status, 200);
+    return user;
+  }
+
+  const owner = await createVerifiedUser(email, "Account Owner");
+  const ownerWorkspaceId = owner.workspaceMemberships[0]?.workspaceId;
+  assert.ok(ownerWorkspaceId);
+  const ownerLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  assert.equal(ownerLogin.status, 200);
+  const ownerCookie = cookieFrom(ownerLogin);
+
+  const profileUpdate = await request("/account/profile", {
+    method: "PATCH",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ name: "Updated Account Owner" }),
+  });
+  assert.equal(profileUpdate.status, 200);
+  assert.deepEqual(await profileUpdate.json(), { name: "Updated Account Owner" });
+  const profileResponse = await request("/account", { headers: { cookie: ownerCookie } });
+  assert.equal(profileResponse.status, 200);
+  const profile = (await profileResponse.json()) as Record<string, unknown>;
+  assert.equal(profile.name, "Updated Account Owner");
+  assert.equal(profile.email, email);
+  assert.equal(profile.hasProfilePhoto, false);
+  assert.equal("profilePhotoBytes" in profile, false);
+
+  const validPng = await sharp({
+    create: { width: 24, height: 16, channels: 3, background: "#6259d9" },
+  })
+    .png()
+    .toBuffer();
+  const imageForm = new FormData();
+  imageForm.set("photo", new Blob([validPng], { type: "image/png" }), "profile.png");
+  const photoUpload = await request("/account/profile-photo", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: imageForm,
+  });
+  assert.equal(photoUpload.status, 200, await photoUpload.clone().text());
+  const storedPhoto = await request("/account/profile-photo", {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(storedPhoto.status, 200);
+  assert.equal(storedPhoto.headers.get("content-type"), "image/webp");
+  const storedMetadata = await sharp(Buffer.from(await storedPhoto.arrayBuffer())).metadata();
+  assert.equal(storedMetadata.width, 512);
+  assert.equal(storedMetadata.height, 512);
+  assert.equal(storedMetadata.format, "webp");
+  assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: owner.id } })).avatarUrl, "/api/v1/account/profile-photo");
+
+  const invalidImageForm = new FormData();
+  invalidImageForm.set("photo", new Blob(["not an image"], { type: "image/jpeg" }), "fake.jpg");
+  assert.equal(
+    (
+      await request("/account/profile-photo", {
+        method: "POST",
+        headers: { cookie: ownerCookie },
+        body: invalidImageForm,
+      })
+    ).status,
+    400,
+  );
+  const oversizedPhoto = new FormData();
+  oversizedPhoto.set(
+    "photo",
+    new Blob([new Uint8Array(5 * 1024 * 1024 + 1)], { type: "image/png" }),
+    "oversized.png",
+  );
+  assert.equal(
+    (
+      await request("/account/profile-photo", {
+        method: "POST",
+        headers: { cookie: ownerCookie },
+        body: oversizedPhoto,
+      })
+    ).status,
+    413,
+  );
+  assert.equal(
+    (
+      await request("/account/profile-photo", {
+        method: "DELETE",
+        headers: { cookie: ownerCookie },
+      })
+    ).status,
+    204,
+  );
+
+  const emailChange = await request("/account/email-change", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ email: newEmail }),
+  });
+  assert.equal(emailChange.status, 200);
+  assert.equal((await emailChange.json()).verificationRequired, true);
+  const pendingProfile = (await (
+    await request("/account", { headers: { cookie: ownerCookie } })
+  ).json()) as { email: string; pendingEmail: string };
+  assert.equal(pendingProfile.email, email);
+  assert.equal(pendingProfile.pendingEmail, newEmail);
+  assert.equal(
+    (
+      await request("/account/email-change/confirm", {
+        method: "POST",
+        headers: { cookie: ownerCookie },
+        body: JSON.stringify({ code: "000000" }),
+      })
+    ).status,
+    400,
+  );
+  const changeCode = codeFromTestEmail(newEmail);
+  assert.equal(
+    (
+      await request("/account/email-change/confirm", {
+        method: "POST",
+        headers: { cookie: ownerCookie },
+        body: JSON.stringify({ code: changeCode }),
+      })
+    ).status,
+    204,
+  );
+  const changedProfile = (await (
+    await request("/account", { headers: { cookie: ownerCookie } })
+  ).json()) as { email: string; pendingEmail: string | null; emailVerifiedAt: string | null };
+  assert.equal(changedProfile.email, newEmail);
+  assert.equal(changedProfile.pendingEmail, null);
+  assert.ok(changedProfile.emailVerifiedAt);
+
+  const notificationTypes = [
+    "TASK_ASSIGNED",
+    "TASK_MENTIONED",
+    "COMMENT_ADDED",
+    "DUE_DATE_REMINDER",
+    "PROJECT_UPDATED",
+    "INVITATION_RECEIVED",
+  ] as const;
+  const defaultPreferences = (await (
+    await request("/account/notifications", { headers: { cookie: ownerCookie } })
+  ).json()) as { preferences: Array<{ type: string; inApp: boolean; email: boolean }> };
+  assert.equal(defaultPreferences.preferences.length, notificationTypes.length);
+  assert.ok(
+    defaultPreferences.preferences.every(({ type, inApp, email: emailEnabled }) =>
+      inApp && emailEnabled === (type === "INVITATION_RECEIVED"),
+    ),
+  );
+  const savedPreferences = await request("/account/notifications", {
+    method: "PUT",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({
+      preferences: notificationTypes.map((type) => ({
+        type,
+        inApp: type !== "TASK_MENTIONED",
+        email: type === "TASK_ASSIGNED" ||
+          type === "INVITATION_RECEIVED" ||
+          type === "DUE_DATE_REMINDER" ||
+          type === "PROJECT_UPDATED",
+      })),
+    }),
+  });
+  assert.equal(savedPreferences.status, 200);
+  assert.equal(
+    await prisma.notificationPreference.count({ where: { userId: owner.id } }),
+    notificationTypes.length,
+  );
+
+  const target = await createVerifiedUser(targetEmail, "Account Target");
+  const targetWorkspaceId = target.workspaceMemberships[0]?.workspaceId;
+  assert.ok(targetWorkspaceId);
+  await prisma.workspaceMember.create({
+    data: { workspaceId: ownerWorkspaceId, userId: target.id, role: "MEMBER" },
+  });
+  const targetLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: targetEmail, password }),
+  });
+  assert.equal(targetLogin.status, 200);
+  const targetCookie = cookieFrom(targetLogin);
+  const enabledPreferences = await request("/account/notifications", {
+    method: "PUT",
+    headers: { cookie: targetCookie },
+    body: JSON.stringify({
+      preferences: notificationTypes.map((type) => ({
+        type,
+        inApp: type !== "TASK_MENTIONED",
+        email: type === "TASK_ASSIGNED" ||
+          type === "INVITATION_RECEIVED" ||
+          type === "DUE_DATE_REMINDER" ||
+          type === "PROJECT_UPDATED",
+      })),
+    }),
+  });
+  assert.equal(enabledPreferences.status, 200);
+
+  const createdProject = await request("/projects", {
+    method: "POST",
+    headers: { cookie: ownerCookie, "x-workspace-id": ownerWorkspaceId },
+    body: JSON.stringify({ name: "Account notification test project" }),
+  });
+  assert.equal(createdProject.status, 201);
+  const project = (await createdProject.json()) as {
+    project: { id: string; statuses: Array<{ id: string; name: string }> };
+  };
+  const todo = project.project.statuses.find(({ name }) => name === "To do");
+  assert.ok(todo);
+  const completed = project.project.statuses.find(({ name }) => name === "Done");
+  assert.ok(completed);
+  await prisma.projectMember.create({
+    data: { projectId: project.project.id, userId: target.id, projectRole: "MEMBER" },
+  });
+  const assignedTask = await request(`/projects/${project.project.id}/tasks`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({
+      title: "Preference-controlled task",
+      statusId: todo.id,
+      assigneeId: target.id,
+    }),
+  });
+  assert.equal(assignedTask.status, 201);
+  const assigned = (await assignedTask.json()) as { task: { id: string } };
+  const mentionedComment = await request(`/tasks/${assigned.task.id}/comments`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ body: `@${targetEmail} please review this task` }),
+  });
+  assert.equal(mentionedComment.status, 201);
+  const hiddenMention = await prisma.notification.findFirstOrThrow({
+    where: { recipientId: target.id, entityId: assigned.task.id, type: "TASK_MENTIONED" },
+  });
+  assert.equal(hiddenMention.inApp, false);
+  const inboxWithoutMention = await request("/notifications", { headers: { cookie: targetCookie } });
+  assert.equal(inboxWithoutMention.status, 200);
+  assert.ok(
+    !((await inboxWithoutMention.json()) as { notifications: Array<{ id: string }> }).notifications.some(
+      ({ id }) => id === hiddenMention.id,
+    ),
+  );
+  await app.get(NotificationsService).processPendingEmailDeliveries();
+  const emailService = app.get(EmailService);
+  const firstDeliveryEmail = takeTestEmails(targetEmail).filter((message) =>
+    message.subject.includes("notification"),
+  );
+  assert.equal(firstDeliveryEmail.length, 2);
+  const projectUpdateNotification = await prisma.notification.findFirstOrThrow({
+    where: {
+      recipientId: target.id,
+      entityType: "TASK",
+      entityId: assigned.task.id,
+      type: "PROJECT_UPDATED",
+    },
+  });
+  assert.equal(projectUpdateNotification.inApp, true);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: projectUpdateNotification.id },
+    })).status,
+    "SENT",
+  );
+  assert.equal(
+    await prisma.notification.count({
+      where: {
+        recipientId: owner.id,
+        entityType: "TASK",
+        entityId: assigned.task.id,
+        type: "PROJECT_UPDATED",
+      },
+    }),
+    0,
+    "An actor must not receive their own project-update notification.",
+  );
+  const notificationRecord = await prisma.notification.findFirstOrThrow({
+    where: { recipientId: target.id, entityId: assigned.task.id, type: "TASK_ASSIGNED" },
+    include: { actor: { select: { id: true, name: true } } },
+  });
+  const taskRecord = await prisma.task.findUniqueOrThrow({
+    where: { id: assigned.task.id },
+    select: { id: true, title: true, projectId: true, project: { select: { name: true } } },
+  });
+  const notificationForReplay: CreatedNotification = {
+    recipientId: target.id,
+    inAppEnabled: true,
+    hasEmailDelivery: true,
+    summary: {
+      id: notificationRecord.id,
+      type: notificationRecord.type,
+      entityType: notificationRecord.entityType,
+      entityId: notificationRecord.entityId,
+      createdAt: notificationRecord.createdAt.toISOString(),
+      readAt: null,
+      actor: notificationRecord.actor,
+      task: {
+        title: taskRecord.title,
+        projectId: taskRecord.projectId,
+        projectName: taskRecord.project.name,
+      },
+      project: null,
+      workspaceInvitation: null,
+    },
+  };
+  await Promise.all([
+    app.get(NotificationsService).publishCreated(notificationForReplay),
+    app.get(NotificationsService).publishCreated(notificationForReplay),
+  ]);
+  assert.deepEqual(takeTestEmails(targetEmail), []);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: notificationRecord.id },
+    })).status,
+    "SENT",
+  );
+  await app.get(NotificationsService).processPendingEmailDeliveries();
+  assert.deepEqual(takeTestEmails(targetEmail), []);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: notificationRecord.id },
+    })).status,
+    "SENT",
+  );
+
+  const originalSendNotification = emailService.sendNotification.bind(emailService);
+  let postCommitSendCount = 0;
+  let failedNotificationId = "";
+  emailService.sendNotification = async () => {
+    postCommitSendCount += 1;
+    throw new Error("mock SMTP failure");
+  };
+  try {
+    const failedDeliveryTask = await request(`/projects/${project.project.id}/tasks`, {
+      method: "POST",
+      headers: { cookie: ownerCookie },
+      body: JSON.stringify({
+        title: "SMTP failure isolation task",
+        statusId: todo.id,
+        assigneeId: target.id,
+      }),
+    });
+    assert.equal(failedDeliveryTask.status, 201);
+    const failedTask = (await failedDeliveryTask.json()) as { task: { id: string } };
+    const failedNotification = await prisma.notification.findFirstOrThrow({
+      where: { recipientId: target.id, entityId: failedTask.task.id, type: "TASK_ASSIGNED" },
+    });
+    failedNotificationId = failedNotification.id;
+    assert.equal(failedNotification.inApp, true);
+    assert.equal(
+      (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+        where: { notificationId: failedNotification.id },
+      })).status,
+      "PENDING",
+    );
+    const targetInbox = await request("/notifications", { headers: { cookie: targetCookie } });
+    assert.equal(targetInbox.status, 200);
+    assert.ok(
+      ((await targetInbox.json()) as { notifications: Array<{ id: string }> }).notifications.some(
+        ({ id }) => id === failedNotification.id,
+      ),
+    );
+    assert.equal(postCommitSendCount, 0);
+  } finally {
+    emailService.sendNotification = originalSendNotification;
+  }
+
+  const failedDelivery = await prisma.notificationEmailDelivery.findUniqueOrThrow({
+    where: { notificationId: failedNotificationId },
+  });
+  assert.equal(failedDelivery.attemptCount, 0);
+  assert.equal(failedDelivery.status, "PENDING");
+
+  const notificationsService = app.get(NotificationsService);
+  const dueNow = new Date();
+  const reminderTask = await prisma.task.create({
+    data: {
+      projectId: project.project.id,
+      title: "UTC due reminder test",
+      statusId: todo.id,
+      reporterId: owner.id,
+      assigneeId: target.id,
+      dueDate: new Date(dueNow.getTime() + 12 * 60 * 60 * 1000),
+    },
+    select: { id: true, dueDate: true },
+  });
+  assert.ok(await notificationsService.createDueDateReminders(dueNow) >= 1);
+  assert.equal(await notificationsService.createDueDateReminders(dueNow), 0);
+  const dueReminder = await prisma.notification.findFirstOrThrow({
+    where: { entityId: reminderTask.id, type: "DUE_DATE_REMINDER" },
+  });
+  assert.equal(dueReminder.recipientId, target.id);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: dueReminder.id },
+    })).status,
+    "PENDING",
+  );
+
+  const nextDueDate = new Date(dueNow.getTime() + 18 * 60 * 60 * 1000);
+  const rescheduled = await request(`/tasks/${reminderTask.id}`, {
+    method: "PATCH",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ assigneeId: owner.id, dueDate: nextDueDate.toISOString() }),
+  });
+  assert.equal(rescheduled.status, 200);
+  assert.ok((await prisma.notification.findUniqueOrThrow({
+    where: { id: dueReminder.id },
+  })).readAt);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: dueReminder.id },
+    })).status,
+    "CANCELLED",
+  );
+  assert.equal(await notificationsService.createDueDateReminders(new Date()), 1);
+  const replacementReminder = await prisma.notification.findFirstOrThrow({
+    where: { entityId: reminderTask.id, type: "DUE_DATE_REMINDER", recipientId: owner.id },
+  });
+  assert.notEqual(replacementReminder.eventKey, dueReminder.eventKey);
+
+  const completedReminderTask = await request(`/tasks/${reminderTask.id}`, {
+    method: "PATCH",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ statusId: completed.id }),
+  });
+  assert.equal(completedReminderTask.status, 200);
+  assert.equal(await notificationsService.createDueDateReminders(new Date()), 0);
+  assert.ok((await prisma.notification.findUniqueOrThrow({
+    where: { id: replacementReminder.id },
+  })).readAt);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: replacementReminder.id },
+    })).status,
+    "CANCELLED",
+  );
+
+  const cancelledStatus = await prisma.projectStatus.create({
+    data: {
+      projectId: project.project.id,
+      name: "Cancelled",
+      position: 99,
+    },
+    select: { id: true },
+  });
+  const cancelledTask = await prisma.task.create({
+    data: {
+      projectId: project.project.id,
+      title: "Cancelled task without reminder",
+      statusId: cancelledStatus.id,
+      reporterId: owner.id,
+      assigneeId: target.id,
+      dueDate: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    },
+    select: { id: true },
+  });
+  const undatedAssignedTask = await prisma.task.create({
+    data: {
+      projectId: project.project.id,
+      title: "Undated task without reminder",
+      statusId: todo.id,
+      reporterId: owner.id,
+      assigneeId: target.id,
+    },
+    select: { id: true },
+  });
+  const unassignedDueTask = await prisma.task.create({
+    data: {
+      projectId: project.project.id,
+      title: "Unassigned task without reminder",
+      statusId: todo.id,
+      reporterId: owner.id,
+      dueDate: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    },
+    select: { id: true },
+  });
+  const missedWindowTask = await prisma.task.create({
+    data: {
+      projectId: project.project.id,
+      title: "Recently overdue task reminder",
+      statusId: todo.id,
+      reporterId: owner.id,
+      assigneeId: target.id,
+      dueDate: new Date(Date.now() - 3 * 60 * 60 * 1000),
+    },
+    select: { id: true },
+  });
+  assert.equal(await notificationsService.createDueDateReminders(new Date()), 1);
+  assert.equal(await notificationsService.createDueDateReminders(new Date()), 0);
+  assert.equal(
+    await prisma.notification.count({
+      where: {
+        type: "DUE_DATE_REMINDER",
+        entityId: { in: [cancelledTask.id, undatedAssignedTask.id, unassignedDueTask.id] },
+      },
+    }),
+    0,
+  );
+  assert.equal(
+    await prisma.notification.count({
+      where: { type: "DUE_DATE_REMINDER", entityId: missedWindowTask.id },
+    }),
+    1,
+  );
+  await notificationsService.processPendingEmailDeliveries();
+  const missedReminder = await prisma.notification.findFirstOrThrow({
+    where: { type: "DUE_DATE_REMINDER", entityId: missedWindowTask.id },
+  });
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: missedReminder.id },
+    })).status,
+    "SENT",
+  );
+  assert.ok(takeTestEmails(targetEmail).some(({ text }) => text.includes("is overdue.")));
+
+  const projectUpdateResponse = await request(`/projects/${project.project.id}`, {
+    method: "PATCH",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ name: "Updated notification project" }),
+  });
+  assert.equal(projectUpdateResponse.status, 200);
+  const metadataUpdate = await prisma.notification.findFirstOrThrow({
+    where: {
+      recipientId: target.id,
+      type: "PROJECT_UPDATED",
+      entityType: "PROJECT",
+      entityId: project.project.id,
+    },
+  });
+  assert.equal(
+    await prisma.notification.count({
+      where: {
+        recipientId: owner.id,
+        type: "PROJECT_UPDATED",
+        entityType: "PROJECT",
+        entityId: project.project.id,
+      },
+    }),
+    0,
+  );
+  await prisma.notificationPreference.update({
+    where: { userId_type: { userId: target.id, type: "PROJECT_UPDATED" } },
+    data: { inApp: false, email: false },
+  });
+  const updateCountBeforeDisabledChange = await prisma.notification.count({
+    where: { recipientId: target.id, type: "PROJECT_UPDATED", entityType: "TASK" },
+  });
+  const priorityUpdate = await request(`/tasks/${assigned.task.id}`, {
+    method: "PATCH",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ priority: "HIGH" }),
+  });
+  assert.equal(priorityUpdate.status, 200);
+  assert.equal(
+    await prisma.notification.count({
+      where: { recipientId: target.id, type: "PROJECT_UPDATED", entityType: "TASK" },
+    }),
+    updateCountBeforeDisabledChange,
+  );
+  await prisma.notificationPreference.update({
+    where: { userId_type: { userId: target.id, type: "PROJECT_UPDATED" } },
+    data: { inApp: true, email: true },
+  });
+
+  const pendingAccessNotification = await prisma.$transaction((transaction) =>
+    notificationsService.createProjectUpdateNotifications(
+      transaction,
+      owner.id,
+      "TASK",
+      assigned.task.id,
+      randomUUID(),
+    ),
+  );
+  assert.equal(pendingAccessNotification.length, 1);
+  const pendingAccessId = pendingAccessNotification[0]!.summary.id;
+  await prisma.projectMember.delete({
+    where: { projectId_userId: { projectId: project.project.id, userId: target.id } },
+  });
+  await notificationsService.processPendingEmailDeliveries();
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: pendingAccessId },
+    })).status,
+    "CANCELLED",
+  );
+  const targetInboxAfterRemoval = await request("/notifications", {
+    headers: { cookie: targetCookie },
+  });
+  assert.ok(
+    !((await targetInboxAfterRemoval.json()) as { notifications: Array<{ id: string }> })
+      .notifications.some(({ id }) => id === metadataUpdate.id || id === pendingAccessId),
+  );
+
+  async function createQueuedEmail(input: {
+    attemptCount?: number;
+    status?: "PENDING" | "PROCESSING";
+    leaseExpiresAt?: Date | null;
+  } = {}): Promise<string> {
+    const record = await prisma.notification.create({
+      data: {
+        recipientId: target.id,
+        actorId: owner.id,
+        type: "TASK_ASSIGNED",
+        entityType: "TASK",
+        entityId: assigned.task.id,
+        eventKey: `outbox-test:${randomUUID()}`,
+        emailDelivery: {
+          create: {
+            attemptCount: input.attemptCount ?? 0,
+            status: input.status ?? "PENDING",
+            ...(input.leaseExpiresAt !== undefined ? { leaseExpiresAt: input.leaseExpiresAt } : {}),
+            ...(input.status === "PROCESSING" ? { attemptedAt: new Date(0) } : {}),
+            nextAttemptAt: new Date(0),
+          },
+        },
+      },
+      select: { id: true },
+    });
+    return record.id;
+  }
+
+  let concurrentSendCount = 0;
+  emailService.sendNotification = async () => {
+    concurrentSendCount += 1;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  };
+  const concurrentDeliveryId = await createQueuedEmail();
+  const concurrentClaims = await Promise.all([
+    notificationsService.processPendingEmailDeliveries(1),
+    notificationsService.processPendingEmailDeliveries(1),
+  ]);
+  assert.equal(concurrentClaims.reduce((sum, count) => sum + count, 0), 1);
+  assert.equal(concurrentSendCount, 1);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: concurrentDeliveryId },
+    })).status,
+    "SENT",
+  );
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: concurrentDeliveryId },
+    })).claimToken,
+    null,
+  );
+
+  let releaseSlowEmail!: () => void;
+  const slowEmailGate = new Promise<void>((resolve) => {
+    releaseSlowEmail = resolve;
+  });
+  let slowEmailSendCount = 0;
+  emailService.sendNotification = async () => {
+    slowEmailSendCount += 1;
+    await slowEmailGate;
+  };
+  const slowDeliveryId = await createQueuedEmail();
+  const slowDeliveryProcessing = notificationsService.processPendingEmailDeliveries(1);
+  let slowDelivery;
+  const claimDeadline = Date.now() + 5_000;
+  do {
+    slowDelivery = await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: slowDeliveryId },
+      select: { status: true, claimToken: true },
+    });
+    if (slowDelivery.status === "PROCESSING" && slowDelivery.claimToken) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  } while (Date.now() < claimDeadline);
+  assert.equal(slowDelivery.status, "PROCESSING");
+  assert.ok(slowDelivery.claimToken);
+  await new Promise((resolve) => setTimeout(resolve, 22_000));
+  const renewedSlowDelivery = await prisma.notificationEmailDelivery.findUniqueOrThrow({
+    where: { notificationId: slowDeliveryId },
+    select: { leaseExpiresAt: true, claimToken: true, attemptCount: true },
+  });
+  assert.equal(renewedSlowDelivery.claimToken, slowDelivery.claimToken);
+  assert.ok(renewedSlowDelivery.leaseExpiresAt!.getTime() > Date.now() + 45_000);
+  assert.equal(renewedSlowDelivery.attemptCount, 1);
+  releaseSlowEmail();
+  assert.equal(await slowDeliveryProcessing, 1);
+  assert.equal(slowEmailSendCount, 1);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: slowDeliveryId },
+    })).status,
+    "SENT",
+  );
+
+  const expiredLeaseId = await createQueuedEmail({
+    status: "PROCESSING",
+    attemptCount: 1,
+    leaseExpiresAt: new Date(0),
+  });
+  assert.equal(await notificationsService.processPendingEmailDeliveries(), 1);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: expiredLeaseId },
+    })).attemptCount,
+    2,
+  );
+
+  let permanentAttemptCount = 0;
+  emailService.sendNotification = async () => {
+    permanentAttemptCount += 1;
+    throw new EmailDeliveryError("Permanent test failure.", false, "SMTP_PERMANENT_TEST");
+  };
+  const permanentDeliveryId = await createQueuedEmail();
+  await notificationsService.processPendingEmailDeliveries();
+  assert.equal(permanentAttemptCount, 1);
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: permanentDeliveryId },
+    })).status,
+    "FAILED",
+  );
+
+  let retryLimitAttemptCount = 0;
+  emailService.sendNotification = async () => {
+    retryLimitAttemptCount += 1;
+    throw new EmailDeliveryError("Temporary test failure.", true, "SMTP_TEMPORARY_TEST");
+  };
+  const retryLimitDeliveryId = await createQueuedEmail({ attemptCount: 4 });
+  await notificationsService.processPendingEmailDeliveries();
+  assert.equal(retryLimitAttemptCount, 1);
+  const terminalDelivery = await prisma.notificationEmailDelivery.findUniqueOrThrow({
+    where: { notificationId: retryLimitDeliveryId },
+  });
+  assert.equal(terminalDelivery.status, "FAILED");
+  assert.equal(terminalDelivery.attemptCount, 5);
+  assert.equal(terminalDelivery.failureCode, "SMTP_TEMPORARY_TEST");
+  assert.equal(await notificationsService.processPendingEmailDeliveries(), 0);
+  assert.equal(retryLimitAttemptCount, 1);
+  emailService.sendNotification = originalSendNotification;
+  const permanentFailureId = await prisma.notification.create({
+    data: {
+      recipientId: target.id,
+      actorId: owner.id,
+      type: "TASK_ASSIGNED",
+      entityType: "TASK",
+      entityId: assigned.task.id,
+      emailDelivery: { create: {} },
+    },
+    select: { id: true },
+  });
+  emailService.sendNotification = async () => {
+    throw new EmailDeliveryError("Permanent test failure.", false, "SMTP_PERMANENT_TEST");
+  };
+  await notificationsService.processPendingEmailDeliveries();
+  assert.equal(
+    (await prisma.notificationEmailDelivery.findUniqueOrThrow({
+      where: { notificationId: permanentFailureId.id },
+    })).status,
+    "FAILED",
+  );
+  emailService.sendNotification = originalSendNotification;
+
+  const invitationWorkspaceResponse = await request("/workspaces", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ name: "Account invitation preference workspace" }),
+  });
+  assert.equal(invitationWorkspaceResponse.status, 201);
+  const invitationWorkspace = (await invitationWorkspaceResponse.json()) as {
+    workspace: { id: string; name: string };
+  };
+  createdWorkspaceIds.push(invitationWorkspace.workspace.id);
+  const inviteOnce = await request(
+    `/workspaces/${invitationWorkspace.workspace.id}/invitations`,
+    {
+      method: "POST",
+      headers: { cookie: ownerCookie },
+      body: JSON.stringify({ email: targetEmail, role: "MEMBER" }),
+    },
+  );
+  assert.equal(inviteOnce.status, 201);
+  assert.equal(takeTestEmails(targetEmail).filter(({ subject }) => subject.includes("invited")).length, 1);
+  const invitationNotification = await prisma.notification.findFirstOrThrow({
+    where: { recipientId: target.id, type: "INVITATION_RECEIVED" },
+  });
+  assert.equal(invitationNotification.inApp, true);
+  const inviteInbox = await request("/notifications", { headers: { cookie: targetCookie } });
+  assert.equal(inviteInbox.status, 200);
+  const inviteSummary = (
+    (await inviteInbox.json()) as {
+      notifications: Array<{
+        id: string;
+        workspaceInvitation: { workspaceName: string } | null;
+      }>;
+    }
+  ).notifications.find(({ id }) => id === invitationNotification.id);
+  assert.equal(inviteSummary?.workspaceInvitation?.workspaceName, invitationWorkspace.workspace.name);
+
+  const invitationPrefsOff = await request("/account/notifications", {
+    method: "PUT",
+    headers: { cookie: targetCookie },
+    body: JSON.stringify({
+      preferences: notificationTypes.map((type) => ({
+        type,
+        inApp: true,
+        email: type === "TASK_ASSIGNED",
+      })),
+    }),
+  });
+  assert.equal(invitationPrefsOff.status, 200);
+  const inviteWithEmailDisabled = await request(
+    `/workspaces/${invitationWorkspace.workspace.id}/invitations`,
+    {
+      method: "POST",
+      headers: { cookie: ownerCookie },
+      body: JSON.stringify({ email: targetEmail, role: "MEMBER" }),
+    },
+  );
+  assert.equal(inviteWithEmailDisabled.status, 201);
+  assert.deepEqual(takeTestEmails(targetEmail), []);
+  assert.equal(
+    await prisma.notification.count({
+      where: {
+        recipientId: target.id,
+        type: "INVITATION_RECEIVED",
+        entityId: invitationNotification.entityId,
+      },
+    }),
+    1,
+  );
+
+  const targetSessions = (await (
+    await request("/account/sessions", { headers: { cookie: targetCookie } })
+  ).json()) as { sessions: Array<{ id: string; current: boolean }> };
+  assert.ok(targetSessions.sessions.every((session) => !("token" in session) && !("tokenHash" in session)));
+  assert.equal(targetSessions.sessions.length, 1);
+  assert.equal(targetSessions.sessions[0]?.current, true);
+  assert.equal(
+    (
+      await request(`/account/sessions/${targetSessions.sessions[0]!.id}`, {
+        method: "DELETE",
+        headers: { cookie: ownerCookie },
+      })
+    ).status,
+    404,
+  );
+
+  const otherOwnerLogin = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: newEmail, password }),
+  });
+  assert.equal(otherOwnerLogin.status, 200);
+  const otherOwnerCookie = cookieFrom(otherOwnerLogin);
+  const ownerSessions = (await (
+    await request("/account/sessions", { headers: { cookie: ownerCookie } })
+  ).json()) as { sessions: Array<{ id: string; current: boolean }> };
+  assert.equal(ownerSessions.sessions.length, 2);
+  assert.equal(
+    (
+      await request(`/account/sessions/${ownerSessions.sessions.find(({ current }) => !current)!.id}`, {
+        method: "DELETE",
+        headers: { cookie: ownerCookie },
+      })
+    ).status,
+    204,
+  );
+  assert.equal((await request("/auth/me", { headers: { cookie: otherOwnerCookie } })).status, 401);
+
+  const passwordSession = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: newEmail, password }),
+  });
+  assert.equal(passwordSession.status, 200);
+  const passwordSessionCookie = cookieFrom(passwordSession);
+  const invalidPasswordChange = await request("/account/password", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ currentPassword: "invalid-current-password", newPassword }),
+  });
+  assert.equal(invalidPasswordChange.status, 401);
+  const changedPasswordResponse = await request("/account/password", {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ currentPassword: password, newPassword }),
+  });
+  assert.equal(changedPasswordResponse.status, 204);
+  assert.equal((await request("/auth/me", { headers: { cookie: passwordSessionCookie } })).status, 401);
+  assert.equal((await request("/auth/me", { headers: { cookie: ownerCookie } })).status, 200);
+  const remainingSessions = (await (
+    await request("/account/sessions", { headers: { cookie: ownerCookie } })
+  ).json()) as { sessions: Array<{ current: boolean }> };
+  assert.equal(remainingSessions.sessions.length, 1);
+  assert.equal(remainingSessions.sessions[0]?.current, true);
+  assert.equal(
+    (
+      await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: newEmail, password }),
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: newEmail, password: newPassword }),
+      })
+    ).status,
+    200,
+  );
 });

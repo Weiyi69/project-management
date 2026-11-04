@@ -2,7 +2,7 @@
 
 ## Automated coverage
 
-`corepack pnpm test` runs the existing database-independent task, realtime, and analytics suites. `corepack pnpm test:integration` starts the Nest application against PostgreSQL and checks account registration/session revocation, validation, project/task persistence, analytics and CSV responses, and cross-workspace authorization. `corepack pnpm test:e2e` uses Chromium to exercise registration, project and task creation, keyboard task-dialog behavior, and axe scans tagged for WCAG 2.1 A/AA and 2.1 A/AA criteria.
+`corepack pnpm test` runs the database-independent task, realtime, analytics, auth, account, and workspace suites. The account unit suite validates actual JPEG, PNG, and WebP content, 512 × 512 WebP conversion, upload rejection, and safe profile responses. `corepack pnpm test:integration` starts the Nest application against PostgreSQL and checks account registration/session revocation, personal profile and email verification, profile-photo upload limits and content validation, notification preferences, due-reminder deduplication and invalidation on task changes, project-update recipient preferences and actor exclusion, current membership checks, asynchronous outbox delivery, concurrent claims, active lease renewal during a slow send, expired lease recovery, retry limits, permanent SMTP failures, password changes, session ownership, workspace invitation preferences, project/task persistence, analytics and CSV responses, and workspace authorization. Automated email delivery is captured in memory and never contacts SMTP. `corepack pnpm test:e2e` uses Chromium to exercise registration, project and task creation, keyboard task-dialog behavior, and axe scans tagged for WCAG 2.1 A/AA criteria; its setup clears only authentication rate-limit buckets after verifying it is connected to local `orbit_test`.
 
 These are focused core-flow checks, not exhaustive coverage of every view or permission combination and not a certification of WCAG conformance.
 
@@ -33,11 +33,11 @@ The Prisma PostgreSQL adapter enables node-postgres query pipelining in its pool
 
 ## Accessibility
 
-The browser check scans registration, the authenticated project workspace, and analytics with axe WCAG 2.1 A/AA rules. Keyboard checks verify task-dialog initial focus, focus containment, Escape close, and focus return. Global focus-visible styles cover buttons, links, inputs, textareas, selects, and explicit tab stops. The tests provide a repeatable baseline, but manual screen-reader, zoom/reflow, and full-application audits remain necessary.
+The browser check scans registration, the authenticated project workspace, the empty and populated workspace calendar, and analytics with axe WCAG 2.1 A/AA rules. It exercises calendar loading, month/week/day/agenda navigation, filters, task and project navigation, and a narrow mobile layout. Keyboard checks verify calendar period navigation and task-dialog initial focus, focus containment, Escape close, and focus return. Global focus-visible styles cover buttons, links, inputs, textareas, selects, and explicit tab stops. The tests provide a repeatable baseline, but manual screen-reader, zoom/reflow, and full-application audits remain necessary.
 
 ## Performance baselines
 
-The database-backed integration test records three login samples and ten samples of project list/detail, task list/detail (including comments), notifications, workspace/project analytics, and task status update requests. The browser test records registration, project creation/navigation, task creation, analytics navigation, and navigation-timing/transfer-size values.
+The database-backed integration test records three login samples and ten samples of project list/detail, task list/detail (including comments), notifications, workspace/project analytics, and task status update requests. It also checks workspace calendar date filtering and authorization. The browser test records registration, project creation/navigation, task creation, analytics navigation, and navigation-timing/transfer-size values.
 
 When run, JSON measurements are written to `test-results/api-performance-baseline.json` and `test-results/ui-performance-baseline.json`. CI uploads these files as workflow artifacts. Timings depend on the machine, database, browser, and CI load; they are measurements, not guaranteed service levels. Numeric performance budgets are intentionally not declared until a representative baseline has been collected and reviewed.
 

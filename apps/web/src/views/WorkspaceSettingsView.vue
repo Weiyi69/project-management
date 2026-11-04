@@ -123,7 +123,7 @@ async function sendInvitation(): Promise<void> {
     await workspaces.invite(inviteEmail.value, inviteRole.value);
     inviteEmail.value = "";
     invitations.value = await workspaces.invitations();
-    notice.value = "Invitation email sent.";
+    notice.value = "Invitation created. The recipient’s notification preferences are respected.";
   } catch (caught) {
     error.value =
       caught instanceof WorkspaceApiError && caught.status === 503

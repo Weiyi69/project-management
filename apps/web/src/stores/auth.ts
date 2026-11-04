@@ -82,6 +82,12 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
+  async function refreshCurrentUser(): Promise<void> {
+    const response = await authApi.currentUser();
+    user.value = response.user;
+    initialized.value = true;
+  }
+
   function expireSession(): void {
     useWorkspaceStore().reset();
     user.value = null;
@@ -93,5 +99,16 @@ export const useAuthStore = defineStore("auth", () => {
     error.value = "";
   }
 
-  return { user, initialized, error, initialize, register, login, logout, expireSession, clearError };
+  return {
+    user,
+    initialized,
+    error,
+    initialize,
+    register,
+    login,
+    logout,
+    refreshCurrentUser,
+    expireSession,
+    clearError,
+  };
 });

@@ -218,6 +218,387 @@
   font-size: 10px;
 }
 
+.workspace-calendar-page {
+  display: grid;
+  gap: 16px;
+}
+
+.workspace-calendar-heading,
+.workspace-calendar-toolbar,
+.workspace-calendar-period,
+.workspace-calendar-period-actions,
+.workspace-calendar-view-switch,
+.workspace-calendar-date {
+  display: flex;
+  align-items: center;
+}
+
+.workspace-calendar-heading,
+.workspace-calendar-toolbar {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workspace-calendar-heading h1 {
+  margin: 0;
+  color: #202a3d;
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.05em;
+}
+
+.workspace-calendar-heading .eyebrow {
+  margin-bottom: 7px;
+}
+
+.workspace-calendar-heading .page-subtitle {
+  margin: 5px 0 0;
+}
+
+.workspace-calendar-period {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.workspace-calendar-period-actions {
+  gap: 4px;
+}
+
+.workspace-calendar-period h2 {
+  margin: 0;
+  color: #30394c;
+  font-size: 17px;
+  font-weight: 630;
+  letter-spacing: -0.035em;
+}
+
+.workspace-calendar-today {
+  min-height: 32px;
+  margin-left: 4px;
+}
+
+.workspace-calendar-view-switch {
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.workspace-calendar-view-switch button {
+  min-height: 31px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #647084;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 570;
+}
+
+.workspace-calendar-view-switch button:hover,
+.workspace-calendar-view-switch button.is-active {
+  background: #f2f1ff;
+  color: #544bc3;
+}
+
+.workspace-calendar-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.workspace-calendar-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #647084;
+  font-size: 9.5px;
+  font-weight: 570;
+}
+
+.workspace-calendar-filters select {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid #dfe3eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #3c485c;
+  font-size: 10px;
+}
+
+.workspace-calendar-clear {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.workspace-calendar-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workspace-calendar-error .button {
+  flex: 0 0 auto;
+}
+
+.workspace-calendar-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 44px 20px;
+  border: 1px dashed #dfe2eb;
+  border-radius: 12px;
+  background: #fff;
+  text-align: center;
+}
+
+.workspace-calendar-empty-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 11px;
+  background: #f0efff;
+  color: #5d54ce;
+}
+
+.workspace-calendar-empty h2 {
+  margin: 2px 0 0;
+  color: #354055;
+  font-size: 15px;
+  font-weight: 630;
+}
+
+.workspace-calendar-empty p {
+  margin: 0;
+  color: #647084;
+  font-size: 10px;
+}
+
+.workspace-calendar-month-weekdays,
+.workspace-calendar-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.workspace-calendar-month-weekdays {
+  gap: 1px;
+  padding: 0 1px;
+  color: #647084;
+  font-size: 9px;
+  font-weight: 620;
+  text-align: center;
+}
+
+.workspace-calendar-month-weekdays span {
+  padding: 7px 3px;
+}
+
+.workspace-calendar-month-grid {
+  overflow: hidden;
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--border);
+}
+
+.workspace-calendar-month-cell,
+.workspace-calendar-week-day {
+  min-width: 0;
+  padding: 7px;
+  background: #fff;
+}
+
+.workspace-calendar-month-cell {
+  min-height: 116px;
+  overflow: hidden;
+}
+
+.workspace-calendar-month-cell.is-outside-month {
+  background: #fafbfc;
+}
+
+.workspace-calendar-month-cell.is-today,
+.workspace-calendar-week-day.is-today {
+  background: #fcfbff;
+}
+
+.workspace-calendar-date {
+  min-width: 0;
+  justify-content: space-between;
+  gap: 5px;
+  margin: 0 0 6px;
+  color: #697488;
+  font-size: 9px;
+  font-weight: 590;
+}
+
+.workspace-calendar-month-cell.is-today .workspace-calendar-date {
+  color: #554cc7;
+}
+
+.workspace-calendar-date>span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-calendar-today-label {
+  color: #5d54ce;
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.workspace-calendar-event {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 23px;
+  gap: 2px;
+  margin-top: 5px;
+  padding: 5px 4px 5px 6px;
+  border: 1px solid #ececf4;
+  border-left: 2px solid #8279e5;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.workspace-calendar-event-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #384459;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-calendar-event-main>strong {
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 620;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
+.workspace-calendar-event-tags {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-calendar-status {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--status-color) 12%, white);
+  color: #4a5568;
+  font-size: 8px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-calendar-event .task-priority {
+  padding: 2px 5px;
+  font-size: 8px;
+}
+
+.workspace-calendar-event-meta {
+  overflow: hidden;
+  color: #647084;
+  font-size: 8px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-calendar-project-link {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  align-self: start;
+  place-items: center;
+  border-radius: 5px;
+  color: #7c8496;
+}
+
+.workspace-calendar-project-link:hover {
+  background: #f1f0ff;
+  color: #544bc3;
+}
+
+.workspace-calendar-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workspace-calendar-week-day,
+.workspace-calendar-single-day {
+  min-height: 180px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.workspace-calendar-date--week {
+  min-height: 26px;
+  margin-bottom: 9px;
+  font-size: 10px;
+}
+
+.workspace-calendar-no-day-tasks {
+  margin: 12px 0 4px;
+  color: #647084;
+  font-size: 9px;
+}
+
+.workspace-calendar-single-day {
+  background: #fff;
+}
+
+.workspace-calendar-agenda {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-calendar-agenda-day {
+  display: grid;
+  grid-template-columns: minmax(135px, 0.3fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.workspace-calendar-agenda-day>h3 {
+  margin: 9px 0 0;
+  color: #445066;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.workspace-calendar-agenda-day .workspace-calendar-event {
+  max-width: 620px;
+}
+
 .invitation-auth-actions {
   display: grid;
   gap: 8px;

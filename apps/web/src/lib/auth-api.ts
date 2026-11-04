@@ -80,10 +80,21 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
     throw new Error("Could not reach ORBIT. Confirm that the API is running, then try again.");
   }
 
-  const body: unknown = await response.json();
+  const responseText = await response.text();
+  let body: unknown = null;
+  if (responseText.trim()) {
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      if (response.ok) {
+        throw new Error("The authentication API returned an invalid response.");
+      }
+    }
+  }
   if (!response.ok) {
     throw new AuthApiError(
-      getErrorMessage(body) ?? "The request could not be completed.",
+      getErrorMessage(body) ??
+        `The request failed (${response.status} ${response.statusText || "HTTP error"}).`,
       response.status,
     );
   }

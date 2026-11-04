@@ -18,6 +18,7 @@ import { ActivityService } from "../activity/activity.service";
 import { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeGateway } from "../realtime/realtime.gateway";
+import { NotificationsService } from "../notifications/notifications.service";
 import { EmailService } from "./email.service";
 import { WorkspaceAccessService } from "./workspace-access.service";
 
@@ -37,6 +38,7 @@ export class WorkspacesService {
     private readonly email: EmailService,
     private readonly realtime: RealtimeGateway,
     private readonly activity: ActivityService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async list(userId: string): Promise<WorkspaceSummary[]> {
@@ -281,7 +283,10 @@ export class WorkspacesService {
       where: { id: workspaceId },
     });
     const inviter = await this.prisma.user.findUniqueOrThrow({ where: { id: actorId } });
-    const existingUser = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    const existingUser = await this.prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      select: { id: true },
+    });
     if (
       existingUser &&
       (await this.prisma.workspaceMember.findUnique({
@@ -340,15 +345,29 @@ export class WorkspacesService {
     const invitationUrl = new URL("/invitations/accept", frontendUrl);
     invitationUrl.searchParams.set("token", rawToken);
 
+    const invitationPreference = existingUser
+      ? await this.prisma.notificationPreference.findUnique({
+          where: {
+            userId_type: {
+              userId: existingUser.id,
+              type: "INVITATION_RECEIVED",
+            },
+          },
+          select: { email: true },
+        })
+      : null;
+    const sendInvitationEmail = !existingUser || (invitationPreference?.email ?? true);
     try {
-      await this.email.sendWorkspaceInvitation({
-        email,
-        inviterName: inviter.name,
-        workspaceName: workspace.name,
-        role: input.role,
-        invitationUrl: invitationUrl.toString(),
-        expiresAt,
-      });
+      if (sendInvitationEmail) {
+        await this.email.sendWorkspaceInvitation({
+          email,
+          inviterName: inviter.name,
+          workspaceName: workspace.name,
+          role: input.role,
+          invitationUrl: invitationUrl.toString(),
+          expiresAt,
+        });
+      }
     } catch (error) {
       try {
         await this.prisma.workspaceInvitation.deleteMany({
@@ -368,6 +387,16 @@ export class WorkspacesService {
         throw error;
       }
       throw new ServiceUnavailableException("The invitation could not be emailed.");
+    }
+
+    if (existingUser) {
+      await this.notifications.notifyWorkspaceInvitation({
+        actorId,
+        recipientId: existingUser.id,
+        invitationId: invitation.id,
+        workspaceId,
+        workspaceName: workspace.name,
+      });
     }
 
     return {
