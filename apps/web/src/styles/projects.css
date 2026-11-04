@@ -1,5 +1,6 @@
 .page-content {
   width: min(100%, 1360px);
+  min-width: 0;
   min-height: calc(100vh - 64px);
   margin: 0 auto;
   padding: 42px 46px 56px;
@@ -7,6 +8,7 @@
 
 .overview-page,
 .section-page {
+  min-width: 0;
   max-width: 1120px;
   margin: 0 auto;
 }

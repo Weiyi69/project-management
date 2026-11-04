@@ -525,9 +525,22 @@ test("registers, creates project work, and loads accessible analytics", async ({
     .locator(".workspace-calendar-month-grid")
     .evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length);
   expect(monthColumnCount).toBe(1);
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-  ).toBe(true);
+  const mobileOverflow = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    overflowingElements: [...document.querySelectorAll("body *")]
+      .map((element) => ({
+        element: `${element.tagName.toLowerCase()}${typeof element.className === "string" && element.className
+          ? `.${element.className.trim().replace(/\s+/g, ".")}`
+          : ""}`,
+        right: Math.round(element.getBoundingClientRect().right),
+      }))
+      .filter(({ right }) => right > window.innerWidth + 1)
+      .slice(0, 5),
+  }));
+  expect(mobileOverflow.documentWidth, JSON.stringify(mobileOverflow)).toBeLessThanOrEqual(
+    mobileOverflow.viewportWidth,
+  );
   await assertWcagAa(page);
   await page.setViewportSize({ width: 1280, height: 800 });
 
