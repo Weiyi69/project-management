@@ -199,12 +199,135 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByRole("heading", { name: "Your projects" })).toBeVisible();
   await expect(onboardingHeading).toBeHidden();
+  type ProjectMemberFixture = {
+    userId: string;
+    name: string;
+    email: string;
+    projectRole: "ADMIN" | "MEMBER";
+    joinedAt: string;
+  };
+  const projectCandidate = {
+    id: "fc14b956-eead-442d-afa0-7f8a4c266abb",
+    name: "Quality Added Member",
+    email: "quality-added-member@example.test",
+  };
+  let projectMembersFixture: ProjectMemberFixture[] | undefined;
+  let showEmptyProjectRoster = true;
+  await page.route("**/api/v1/projects/*/members**", async (route) => {
+    const request = route.request();
+    const method = request.method();
+    if (method === "GET") {
+      const response = await route.fetch();
+      const body = (await response.json()) as {
+        members: ProjectMemberFixture[];
+        workspaceMembers: Array<{ id: string; name: string; email: string }>;
+      };
+      projectMembersFixture ??= body.members;
+      const membersForResponse = showEmptyProjectRoster ? [] : projectMembersFixture;
+      showEmptyProjectRoster = false;
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          members: membersForResponse,
+          workspaceMembers: [...body.workspaceMembers, projectCandidate],
+        },
+      });
+      return;
+    }
+
+    if (method === "POST") {
+      const input = request.postDataJSON() as {
+        userId: string;
+        projectRole: "ADMIN" | "MEMBER";
+      };
+      const member: ProjectMemberFixture = {
+        userId: input.userId,
+        name: projectCandidate.name,
+        email: projectCandidate.email,
+        projectRole: input.projectRole,
+        joinedAt: new Date().toISOString(),
+      };
+      projectMembersFixture = [...(projectMembersFixture ?? []), member];
+      await route.fulfill({ status: 201, json: { member } });
+      return;
+    }
+
+    const userId = new URL(request.url()).pathname.split("/").at(-1)!;
+    if (method === "PATCH") {
+      const input = request.postDataJSON() as { projectRole: "ADMIN" | "MEMBER" };
+      projectMembersFixture = (projectMembersFixture ?? []).map((member) =>
+        member.userId === userId ? { ...member, projectRole: input.projectRole } : member,
+      );
+      await route.fulfill({
+        status: 200,
+        json: { member: projectMembersFixture.find((member) => member.userId === userId) },
+      });
+      return;
+    }
+
+    projectMembersFixture = (projectMembersFixture ?? []).filter(
+      (member) => member.userId !== userId,
+    );
+    await route.fulfill({ status: 204 });
+  });
   await page
     .locator(".dashboard-project-list")
     .getByRole("link", { name: new RegExp(`Quality browser project ${suffix}`) })
     .click();
   await expect(page.getByRole("heading", { name: /^Tasks \d+$/ })).toBeVisible();
   await expect(page.locator(".project-loading")).toBeHidden();
+  const projectMembersList = page.getByRole("list", { name: "Project members" });
+  await expect(page.getByRole("heading", { name: "Project members" })).toBeVisible();
+  await expect(page.getByText("No project members yet.")).toBeVisible();
+  await assertWcagAa(page);
+  await page.reload();
+  await expect(projectMembersList.getByText("Quality Browser User", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Role for Quality Browser User")).toHaveValue("ADMIN");
+  await expect(
+    page.getByRole("button", { name: "Remove Quality Browser User from project" }),
+  ).toBeDisabled();
+  await page.getByLabel("Add a workspace member").selectOption(projectCandidate.id);
+  await page.getByLabel("Project role").selectOption("ADMIN");
+  await page.getByRole("button", { name: "Add member" }).click();
+  await expect(projectMembersList.getByText(projectCandidate.name, { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Project member added." })).toBeVisible();
+  await page.getByLabel(`Role for ${projectCandidate.name}`).selectOption("MEMBER");
+  await page.getByRole("button", { name: `Save role for ${projectCandidate.name}` }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: `Updated ${projectCandidate.name}'s project role.` }),
+  ).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: `Remove ${projectCandidate.name} from project` }).click();
+  await expect(projectMembersList.getByText(projectCandidate.name, { exact: true })).toHaveCount(0);
+  let releaseMemberResponse!: () => void;
+  const heldMemberResponse = new Promise<void>((resolve) => {
+    releaseMemberResponse = resolve;
+  });
+  await page.route("**/api/v1/projects/*/members**", async (route) => {
+    await heldMemberResponse;
+    await route.continue();
+  });
+  const memberReload = page.reload();
+  await expect(page.locator(".project-loading")).toBeVisible();
+  releaseMemberResponse();
+  await memberReload;
+  await page.unroute("**/api/v1/projects/*/members**");
+  await expect(projectMembersList.getByText("Quality Browser User", { exact: true })).toBeVisible();
+
+  await page.route("**/api/v1/projects/*/members**", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Project members are temporarily unavailable." }),
+    }),
+  );
+  await page.reload();
+  await expect(page.getByText("Project members are temporarily unavailable.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry loading members" })).toBeVisible();
+  await page.unroute("**/api/v1/projects/*/members**");
+  await page.reload();
+  await expect(projectMembersList.getByText("Quality Browser User", { exact: true })).toBeVisible();
   navigationDurations.projectCreationAndNavigation = performance.now() - projectsStartedAt;
 
   await assertWcagAa(page);

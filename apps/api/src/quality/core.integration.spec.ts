@@ -289,6 +289,93 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   assert.ok(todoStatus);
   assert.ok(doneStatus);
 
+  const projectMemberUser = await prisma.user.create({
+    data: {
+      name: "Project Member",
+      email: `project-member-${randomUUID()}@example.test`,
+      passwordHash: "unused-integration-password-hash",
+    },
+  });
+  createdUserIds.push(projectMemberUser.id);
+  await prisma.workspaceMember.create({
+    data: { workspaceId: ownerWorkspace.id, userId: projectMemberUser.id, role: "MEMBER" },
+  });
+
+  const initialProjectMembers = await request(`/projects/${projectId}/members`, {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(initialProjectMembers.status, 200);
+  const initialMemberData = (await initialProjectMembers.json()) as {
+    members: Array<{ userId: string; projectRole: string }>;
+    workspaceMembers: Array<{ id: string }>;
+  };
+  assert.equal(initialMemberData.members.length, 1);
+  assert.equal(initialMemberData.members[0]?.userId, ownerRecord.id);
+  assert.equal(initialMemberData.members[0]?.projectRole, "ADMIN");
+  assert.ok(initialMemberData.workspaceMembers.some(({ id }) => id === projectMemberUser.id));
+
+  const addedProjectMember = await request(`/projects/${projectId}/members`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ userId: projectMemberUser.id, projectRole: "MEMBER" }),
+  });
+  assert.equal(addedProjectMember.status, 201);
+  assert.equal(
+    ((await addedProjectMember.json()) as { member: { projectRole: string } }).member.projectRole,
+    "MEMBER",
+  );
+
+  const duplicateProjectMember = await request(`/projects/${projectId}/members`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ userId: projectMemberUser.id, projectRole: "MEMBER" }),
+  });
+  assert.equal(duplicateProjectMember.status, 409);
+
+  const projectMemberRoleChanged = await request(
+    `/projects/${projectId}/members/${projectMemberUser.id}`,
+    {
+      method: "PATCH",
+      headers: { cookie: ownerCookie },
+      body: JSON.stringify({ projectRole: "ADMIN" }),
+    },
+  );
+  assert.equal(projectMemberRoleChanged.status, 200);
+  assert.equal(
+    ((await projectMemberRoleChanged.json()) as { member: { projectRole: string } }).member
+      .projectRole,
+    "ADMIN",
+  );
+
+  const projectMemberRoleRestored = await request(
+    `/projects/${projectId}/members/${projectMemberUser.id}`,
+    {
+      method: "PATCH",
+      headers: { cookie: ownerCookie },
+      body: JSON.stringify({ projectRole: "MEMBER" }),
+    },
+  );
+  assert.equal(projectMemberRoleRestored.status, 200);
+
+  const removedProjectMember = await request(
+    `/projects/${projectId}/members/${projectMemberUser.id}`,
+    { method: "DELETE", headers: { cookie: ownerCookie } },
+  );
+  assert.equal(removedProjectMember.status, 204);
+
+  const lastProjectAdminDemotion = await request(
+    `/projects/${projectId}/members/${ownerRecord.id}`,
+    {
+      method: "PATCH",
+      headers: { cookie: ownerCookie },
+      body: JSON.stringify({ projectRole: "MEMBER" }),
+    },
+  );
+  assert.equal(lastProjectAdminDemotion.status, 409);
+  await prisma.workspaceMember.delete({
+    where: { workspaceId_userId: { workspaceId: ownerWorkspace.id, userId: projectMemberUser.id } },
+  });
+
   const createdTaskResponse = await request(`/projects/${projectId}/tasks`, {
     method: "POST",
     headers: { cookie: ownerCookie },
@@ -733,6 +820,16 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   });
   assert.equal(outsiderTaskSearch.status, 200);
   assert.deepEqual(await outsiderTaskSearch.json(), { projects: [], tasks: [] });
+  const outsiderProjectMembers = await request(`/projects/${projectId}/members`, {
+    headers: { cookie: outsiderCookie },
+  });
+  assert.equal(outsiderProjectMembers.status, 404);
+  const outsiderProjectMemberAddition = await request(`/projects/${projectId}/members`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({ userId: outsiderData.id, projectRole: "MEMBER" }),
+  });
+  assert.equal(outsiderProjectMemberAddition.status, 404);
 
   const outsiderCalendar = await request(
     `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${focusTodayKey}&endDate=${focusTodayKey}`,

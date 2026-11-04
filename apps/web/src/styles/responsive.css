@@ -165,11 +165,14 @@
   }
 
   .topbar {
+    width: 100%;
+    min-width: 0;
     height: 58px;
     padding: 0 16px;
   }
 
   .topbar-left {
+    flex: 1 1 0;
     gap: 6px;
   }
 
@@ -182,10 +185,12 @@
   }
 
   .topbar-actions {
+    flex: 0 0 auto;
     gap: 6px;
   }
 
   .topbar-breadcrumb {
+    min-width: 0;
     gap: 6px;
     font-size: 10.5px;
   }
@@ -215,6 +220,7 @@
 
   .workspace-calendar-heading {
     align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .workspace-calendar-heading .button {
@@ -342,6 +348,21 @@
   .project-detail-actions {
     align-items: flex-start;
     flex-direction: column-reverse;
+  }
+
+  .project-member-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .project-member-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .project-member-add-form {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .page-heading .button {

@@ -206,22 +206,58 @@ export class WorkspacesService {
       throw new ForbiddenException("Only the workspace owner can remove another admin.");
     }
 
-    await this.prisma.$transaction(async (transaction) => {
-      const target = await transaction.user.findUniqueOrThrow({
-        where: { id: targetUserId },
-        select: { name: true },
-      });
-      await transaction.workspaceMember.delete({
-        where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
-      });
-      await this.activity.record(transaction, {
-        workspaceId,
-        actorId,
-        entityType: "MEMBERSHIP",
-        entityId: targetUserId,
-        action: "WORKSPACE_MEMBER_REMOVED",
-        metadata: { memberName: target.name },
-      });
+    await this.prisma.$transaction(
+      async (transaction) => {
+        const target = await transaction.user.findUniqueOrThrow({
+          where: { id: targetUserId },
+          select: { name: true },
+        });
+        const projectAdmins = await transaction.projectMember.findMany({
+          where: {
+            userId: targetUserId,
+            projectRole: "ADMIN",
+            project: { workspaceId },
+          },
+          select: { projectId: true, project: { select: { name: true } } },
+        });
+        for (const projectAdmin of projectAdmins) {
+          const adminCount = await transaction.projectMember.count({
+            where: {
+              projectId: projectAdmin.projectId,
+              projectRole: "ADMIN",
+              user: { workspaceMemberships: { some: { workspaceId } } },
+            },
+          });
+          if (adminCount <= 1) {
+            throw new ConflictException(
+              `Assign another project admin to "${projectAdmin.project.name}" before removing this workspace member.`,
+            );
+          }
+        }
+
+        await transaction.workspaceMember.delete({
+          where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+        });
+        await transaction.projectMember.deleteMany({
+          where: { userId: targetUserId, project: { workspaceId } },
+        });
+        await this.activity.record(transaction, {
+          workspaceId,
+          actorId,
+          entityType: "MEMBERSHIP",
+          entityId: targetUserId,
+          action: "WORKSPACE_MEMBER_REMOVED",
+          metadata: { memberName: target.name },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+        throw new ConflictException(
+          "Project membership changed while the workspace member was being removed. Refresh and try again.",
+        );
+      }
+      throw error;
     });
     await this.realtime.revokeWorkspaceAccess(workspaceId, targetUserId);
   }

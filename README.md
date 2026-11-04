@@ -1,6 +1,20 @@
 # ORBIT
 
-ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–7 and the workspace-wide calendar are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, project task planning, Socket.IO-based task synchronization, presence and in-app notifications, workspace and project analytics with CSV exports, and a workspace calendar.
+ORBIT is a collaborative project-management platform. **Stages 1–7 are implemented, and the Stage 8 focused quality baseline is in place.** The current application includes authenticated workspace and project management, task planning and collaboration, workspace and project analytics, a workspace-wide calendar, personal account settings, password recovery, global project/task search, notification email delivery, and project-specific member management. The status section below distinguishes working product workflows from quality and deployment work that remains.
+
+## Current implementation status
+
+| Area | Status | What works |
+| --- | --- | --- |
+| Foundation and application shell | Implemented | Vue 3/Vite web app, NestJS API, shared TypeScript contracts, PostgreSQL/Prisma, responsive ORBIT UI, authenticated routing, and local development setup. |
+| Accounts and security workflows | Implemented | Registration, email verification, sign-in, server-managed sessions, password recovery, profile and verified-email changes, photo uploads, password changes, and session management. Real email delivery requires SMTP configuration. |
+| Workspaces and projects | Implemented | Workspace selection/settings, invitations, workspace/project roles, project creation and editing, and project-member listing, adding, role changes, and removal. Project visibility remains workspace-wide. |
+| Task planning and collaboration | Implemented | Project boards, table and calendar views, task CRUD and assignment, comments and mentions, labels, dependencies, and authenticated real-time updates/presence. |
+| Workspace calendar | Implemented | Month, week, day, and agenda views for due-dated tasks, with project/status/priority/assignee filters and navigation to existing task/project workflows. Undated tasks are not shown. |
+| Analytics and search | Implemented | Workspace and project analytics with CSV export, plus bounded search across accessible projects and tasks. |
+| Notifications and email outbox | Implemented | In-app notifications, due-date reminders, project updates, preferences, and retryable database-backed email delivery. SMTP delivery is at-least-once, so a rare duplicate is possible after a provider accepts a message just before a process crash. |
+| Stage 8 quality baseline | Focused coverage implemented | Typechecks, production builds, unit tests, isolated PostgreSQL integration tests, and Playwright/axe core-flow checks are available. They do not exhaustively cover every feature, permission combination, or accessibility scenario. |
+| Production readiness | Remaining work | Deployment and operational hardening are not included. Multi-instance realtime deployments need a shared Socket.IO adapter; live email delivery needs correctly configured SMTP and secrets. |
 
 Local development targets Windows 10/11 with PostgreSQL installed natively and managed through pgAdmin 4. Docker Desktop is not required.
 
@@ -122,6 +136,7 @@ Analytics provides a workspace dashboard and project drill-down based on persist
 - `GET /api/v1/search?q=...` for bounded project/task matches across current workspace memberships
 - `GET /api/v1/workspaces/:workspaceId/calendar/tasks?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` for due-dated tasks within an inclusive date range
 - `GET`, `PATCH`, and `DELETE /api/v1/projects/:projectId`
+- `GET` and `POST /api/v1/projects/:projectId/members`; `PATCH` and `DELETE /api/v1/projects/:projectId/members/:userId`
 - `GET` and `POST /api/v1/projects/:projectId/tasks`; `GET`, `PATCH`, and `DELETE /api/v1/tasks/:taskId`
 - `GET`, `POST`, `PATCH`, and `DELETE /api/v1/projects/:projectId/labels...`
 - `POST /api/v1/tasks/:taskId/comments`; `PATCH` and `DELETE /api/v1/comments/:commentId`
@@ -129,9 +144,9 @@ Analytics provides a workspace dashboard and project drill-down based on persist
 - `GET /api/v1/invitations/preview/:token` and authenticated `POST /api/v1/invitations/accept`
 - Authenticated `GET /api/v1/notifications`, `PATCH /api/v1/notifications/:notificationId/read`, and `PATCH /api/v1/notifications/read-all`
 
-Role permissions: workspace owners can rename/delete their empty workspace, grant/revoke admin roles, invite admins or members, and manage projects. Workspace admins can invite/manage members and manage projects, but cannot rename/delete workspaces or grant/administer other admins. Members can view workspace projects and project details, but cannot create or edit projects. Owners cannot be removed or demoted. Invitations cannot grant the owner role.
+Role permissions: workspace owners can rename/delete their empty workspace, grant/revoke admin roles, invite admins or members, and manage projects. Workspace admins can invite/manage members and manage projects, but cannot rename/delete workspaces or grant/administer other admins. Members can view workspace projects and project details, but cannot create or edit projects. Project admins and workspace owners/admins can add or remove project members and assign project `ADMIN`/`MEMBER` roles; only current workspace members can be added, and each project keeps at least one project admin. Project membership controls project administration, not visibility: all current workspace members retain access to workspace projects. Removing a workspace member also removes their project memberships and is blocked if that would leave a project without an admin. Owners cannot be removed or demoted. Invitations cannot grant the owner role.
 
-The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. Task boards, table/calendar views, task creation and assignment, comments, labels, dependencies, workspace invitations, and Stage 7 analytics are connected. Authenticated Socket.IO sessions use the existing HTTP-only session cookie. Members may join only project rooms for workspaces they currently belong to; task and comment changes are broadcast to those rooms, and project presence is ephemeral on the single API instance. Removing a workspace member also removes their active sockets from that workspace's project rooms. In-app notifications are persisted for task assignments, comments/mentions, and workspace invitations; comments can mention workspace members with their email address (for example `@person@example.com`). Email channel preferences exist for all listed notification types; currently task assignment, mention, comment, and invitation events are produced by application workflows. Due-date reminder and general project-update event producers are not implemented yet. The notification menu and Inbox page support unread counts and read state across connected sessions. Multi-instance deployments need a shared Socket.IO adapter for cross-instance rooms and presence.
+The sidebar, responsive mobile navigation, workspace menu, notification/profile menus, and `Ctrl+K`/`⌘K` page search are available. Task boards, table and workspace calendar views, task creation and assignment, comments, labels, dependencies, workspace invitations, project-member management, personal account settings, password recovery, global project/task search, and workspace/project analytics are connected. Authenticated Socket.IO sessions use the existing HTTP-only session cookie. Members may join only project rooms for workspaces they currently belong to; task and comment changes are broadcast to those rooms, and project presence is ephemeral on the single API instance. Removing a workspace member also removes their active sockets from that workspace's project rooms. In-app notifications are persisted for task assignments, comments/mentions, workspace invitations, due-date reminders, and project updates; comments can mention workspace members with their email address (for example `@person@example.com`). Email channel preferences are respected by these workflows. The notification menu and Inbox page support unread counts and read state across connected sessions. Multi-instance deployments need a shared Socket.IO adapter for cross-instance rooms and presence.
 
 The Vite development server proxies both `/api` and `/socket.io` to the local API. A production deployment must route the same paths (including WebSocket upgrades for `/socket.io`) to the API service.
 
@@ -150,9 +165,10 @@ The Vite development server proxies both `/api` and `/socket.io` to the local AP
 | `corepack pnpm test:realtime` | Test Socket.IO authentication, room access, task and notification events, presence, and session revocation |
 | `corepack pnpm test:tasks` | Test task update service behavior |
 | `corepack pnpm test:analytics` | Test analytics health rules, date windows, and CSV safety |
-| `corepack pnpm test` | Run database-independent task, realtime, and analytics tests |
+| `corepack pnpm test:projects` | Test project-member permissions and workspace boundaries |
+| `corepack pnpm test` | Run database-independent task, realtime, analytics, project, search, auth, account, and workspace tests |
 | `corepack pnpm test:integration` | Run authenticated API workflows against an isolated PostgreSQL `orbit_test` database |
-| `corepack pnpm test:e2e` | Run Chromium core-flow, keyboard-dialog, and axe WCAG 2.1 AA-oriented checks |
+| `corepack pnpm test:e2e` | Run Chromium core-flow, project-member UI, keyboard-dialog, and axe WCAG 2.1 AA-oriented checks |
 
 Stage 8 quality check details, isolated local PostgreSQL integration setup, performance measurement outputs, and coverage limits are documented in [QUALITY.md](./QUALITY.md).
 Email verification, Gmail SMTP setup, password recovery, and the opt-in delivery smoke test are documented in [EMAIL_AUTH.md](./EMAIL_AUTH.md).
@@ -172,6 +188,8 @@ prisma/
   seed.ts              Idempotent demo data
 ```
 
-## Scope and next stages
+## Stage notes and remaining work
 
-Stages 1–7 establish the technical foundation, frontend experience, local account authentication, workspace/project management, task workflows, real-time task collaboration, and workspace/project analytics. Project-specific member management, password reset, due-date reminder scheduling, comprehensive feature tests beyond focused coverage, and deployment are not implemented yet. Remaining preview screens are not database-backed product workflows. This local-development implementation is not production-ready without additional operational hardening.
+Stages 1–7 (foundation, application experience, authentication, workspace/project management, task workflows, real-time collaboration, and analytics) are implemented. The workspace-wide calendar and the account, notification/outbox, global-search, and project-member workflows have also been added. Stage 8 has a working, repeatable quality baseline, including isolated database-backed and browser/accessibility checks; it is focused coverage, not exhaustive verification of every page and permission edge.
+
+Password recovery, project-member management, and due-date reminders are implemented; they are not outstanding roadmap items. The current routed application pages are connected product workflows rather than preview placeholders. Remaining work is broader automated/manual coverage, deployment, and production operational hardening. In particular, configure production secrets and SMTP deliberately, review CI/security findings before release, and add a shared Socket.IO adapter before running multiple API instances. Local-development support does not by itself certify production readiness.

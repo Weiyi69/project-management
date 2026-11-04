@@ -192,6 +192,8 @@ function actionLabel(action: string): string {
     PROJECT_CREATED: "created a project",
     PROJECT_UPDATED: "updated a project",
     PROJECT_MEMBER_ADDED: "added a project member",
+    PROJECT_MEMBER_ROLE_CHANGED: "changed a project member role",
+    PROJECT_MEMBER_REMOVED: "removed a project member",
     TASK_CREATED: "created a task",
     TASK_ASSIGNED: "assigned a task",
     TASK_COMPLETED: "completed a task",

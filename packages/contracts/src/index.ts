@@ -92,6 +92,25 @@ export interface ProjectsResponse {
   projects: ProjectSummary[];
 }
 
+export type ProjectMemberRole = "ADMIN" | "MEMBER";
+
+export interface ProjectMemberSummary {
+  userId: string;
+  name: string;
+  email: string;
+  projectRole: ProjectMemberRole;
+  joinedAt: string;
+}
+
+export interface ProjectMembersResponse {
+  members: ProjectMemberSummary[];
+  workspaceMembers: TaskWorkspaceMember[];
+}
+
+export interface ProjectMemberResponse {
+  member: ProjectMemberSummary;
+}
+
 export interface GlobalSearchProject {
   id: string;
   name: string;

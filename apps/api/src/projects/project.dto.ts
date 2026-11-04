@@ -2,12 +2,13 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
   ValidateIf,
 } from "class-validator";
-import { ProjectLifecycle } from "../generated/prisma/enums";
+import { ProjectLifecycle, ProjectMemberRole } from "../generated/prisma/enums";
 
 export class CreateProjectDto {
   @IsString()
@@ -38,4 +39,17 @@ export class UpdateProjectDto {
   @ValidateIf((_object, value: unknown) => value !== undefined)
   @IsEnum(ProjectLifecycle)
   state?: ProjectLifecycle;
+}
+
+export class AddProjectMemberDto {
+  @IsUUID()
+  userId!: string;
+
+  @IsEnum(ProjectMemberRole)
+  projectRole!: ProjectMemberRole;
+}
+
+export class UpdateProjectMemberRoleDto {
+  @IsEnum(ProjectMemberRole)
+  projectRole!: ProjectMemberRole;
 }
