@@ -18,12 +18,13 @@ function createService(
   prisma: Partial<PrismaService>,
   activity: ActivityService = { record: async () => undefined } as unknown as ActivityService,
   access: WorkspaceAccessService = {} as WorkspaceAccessService,
+  realtime: RealtimeGateway = {} as RealtimeGateway,
 ): WorkspacesService {
   return new WorkspacesService(
     prisma as PrismaService,
     access,
     {} as EmailService,
-    {} as RealtimeGateway,
+    realtime,
     activity,
     {} as NotificationsService,
   );
@@ -436,4 +437,97 @@ test("a valid ADMIN invitation grants only ADMIN membership and leaves workspace
   });
   assert.equal(transactionCount, 1);
   assert.equal(invitation.workspace.ownerId, "original-owner");
+});
+
+test("workspace member removal cannot leave a project without an admin", async () => {
+  const targetUserId = "a431b93e-e968-4d7b-b346-f5c2c373e630";
+  let workspaceMemberDeleted = false;
+  const access = {
+    requireWorkspaceManager: async () => ({ workspaceId, userId, role: "OWNER" }),
+    requireMembership: async () => ({ workspaceId, userId: targetUserId, role: "MEMBER" }),
+  } as unknown as WorkspaceAccessService;
+  const prisma = {
+    user: {},
+    $transaction: async (run: (transaction: unknown) => Promise<unknown>) =>
+      run({
+        user: { findUniqueOrThrow: async () => ({ name: "Last Project Admin" }) },
+        projectMember: {
+          findMany: async () => [
+            { projectId: "project-id", project: { name: "Only Admin Project" } },
+          ],
+          count: async () => 1,
+        },
+        workspaceMember: {
+          delete: async () => {
+            workspaceMemberDeleted = true;
+          },
+        },
+      }),
+  } as unknown as PrismaService;
+
+  await assert.rejects(
+    createService(prisma, undefined, access).removeMember(workspaceId, userId, targetUserId),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "getStatus" in error &&
+      typeof error.getStatus === "function" &&
+      error.getStatus() === 409,
+  );
+  assert.equal(workspaceMemberDeleted, false);
+});
+
+test("workspace member removal deletes project roles after preserving remaining admins", async () => {
+  const targetUserId = "a431b93e-e968-4d7b-b346-f5c2c373e630";
+  let projectMembershipDelete: unknown;
+  let workspaceMembershipDelete: unknown;
+  let realtimeRevoked = false;
+  const access = {
+    requireWorkspaceManager: async () => ({ workspaceId, userId, role: "OWNER" }),
+    requireMembership: async () => ({ workspaceId, userId: targetUserId, role: "MEMBER" }),
+  } as unknown as WorkspaceAccessService;
+  const prisma = {
+    $transaction: async (
+      run: (transaction: unknown) => Promise<unknown>,
+      options: { isolationLevel?: unknown },
+    ) => {
+      assert.ok(options.isolationLevel);
+      return run({
+        user: { findUniqueOrThrow: async () => ({ name: "Departing Member" }) },
+        projectMember: {
+          findMany: async () => [
+            { projectId: "project-id", project: { name: "Shared Admin Project" } },
+          ],
+          count: async () => 2,
+          deleteMany: async (args: unknown) => {
+            projectMembershipDelete = args;
+          },
+        },
+        workspaceMember: {
+          delete: async (args: unknown) => {
+            workspaceMembershipDelete = args;
+          },
+        },
+      });
+    },
+  } as unknown as PrismaService;
+  const realtime = {
+    revokeWorkspaceAccess: async () => {
+      realtimeRevoked = true;
+    },
+  } as unknown as RealtimeGateway;
+
+  await createService(prisma, undefined, access, realtime).removeMember(
+    workspaceId,
+    userId,
+    targetUserId,
+  );
+
+  assert.deepEqual(projectMembershipDelete, {
+    where: { userId: targetUserId, project: { workspaceId } },
+  });
+  assert.deepEqual(workspaceMembershipDelete, {
+    where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+  });
+  assert.equal(realtimeRevoked, true);
 });

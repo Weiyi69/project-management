@@ -1,8 +1,13 @@
 import type {
+  ProjectMemberResponse,
+  ProjectMemberRole,
+  ProjectMembersResponse,
+  ProjectMemberSummary,
   ProjectLifecycle,
   ProjectSummary,
   ProjectResponse,
   ProjectsResponse,
+  TaskWorkspaceMember,
   WorkspaceResponse,
   WorkspaceSummary,
 } from "@orbit/contracts";
@@ -50,7 +55,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
     throw new Error("Could not reach ORBIT. Confirm that the API is running, then try again.");
   }
 
-  const body: unknown = await response.json();
+  const body: unknown = response.status === 204 ? undefined : await response.json();
   if (!response.ok) {
     throw new ProjectApiError(getErrorMessage(body) ?? "Could not complete the request.", response.status);
   }
@@ -182,6 +187,74 @@ function parseWorkspaceResponse(value: unknown): WorkspaceResponse {
   return { workspace: parseWorkspace(value.workspace) };
 }
 
+function parseWorkspaceMember(value: unknown): TaskWorkspaceMember {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("id" in value) ||
+    typeof value.id !== "string" ||
+    !("name" in value) ||
+    typeof value.name !== "string" ||
+    !("email" in value) ||
+    typeof value.email !== "string"
+  ) {
+    throw new Error("The project members API returned an invalid workspace member.");
+  }
+  return { id: value.id, name: value.name, email: value.email };
+}
+
+function parseProjectMember(value: unknown): ProjectMemberSummary {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("userId" in value) ||
+    typeof value.userId !== "string" ||
+    !("name" in value) ||
+    typeof value.name !== "string" ||
+    !("email" in value) ||
+    typeof value.email !== "string" ||
+    !("projectRole" in value) ||
+    (value.projectRole !== "ADMIN" && value.projectRole !== "MEMBER") ||
+    !("joinedAt" in value) ||
+    typeof value.joinedAt !== "string"
+  ) {
+    throw new Error("The projects API returned an invalid project member.");
+  }
+
+  return {
+    userId: value.userId,
+    name: value.name,
+    email: value.email,
+    projectRole: value.projectRole,
+    joinedAt: value.joinedAt,
+  };
+}
+
+function parseProjectMembersResponse(value: unknown): ProjectMembersResponse {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("members" in value) ||
+    !Array.isArray(value.members) ||
+    !("workspaceMembers" in value) ||
+    !Array.isArray(value.workspaceMembers)
+  ) {
+    throw new Error("The projects API returned an invalid project members response.");
+  }
+
+  return {
+    members: value.members.map(parseProjectMember),
+    workspaceMembers: value.workspaceMembers.map(parseWorkspaceMember),
+  };
+}
+
+function parseProjectMemberResponse(value: unknown): ProjectMemberResponse {
+  if (typeof value !== "object" || value === null || !("member" in value)) {
+    throw new Error("The projects API returned an invalid project member response.");
+  }
+  return { member: parseProjectMember(value.member) };
+}
+
 export const projectApi = {
   async list() {
     return parseProjectsResponse(await request("/projects"));
@@ -191,6 +264,40 @@ export const projectApi = {
   },
   async get(projectId: string) {
     return parseProjectResponse(await request(`/projects/${encodeURIComponent(projectId)}`));
+  },
+  async listMembers(projectId: string) {
+    return parseProjectMembersResponse(
+      await request(`/projects/${encodeURIComponent(projectId)}/members`),
+    );
+  },
+  async addMember(
+    projectId: string,
+    input: { userId: string; projectRole: ProjectMemberRole },
+  ) {
+    return parseProjectMemberResponse(
+      await request(`/projects/${encodeURIComponent(projectId)}/members`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
+  },
+  async updateMemberRole(
+    projectId: string,
+    userId: string,
+    projectRole: ProjectMemberRole,
+  ) {
+    return parseProjectMemberResponse(
+      await request(
+        `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`,
+        { method: "PATCH", body: JSON.stringify({ projectRole }) },
+      ),
+    );
+  },
+  async removeMember(projectId: string, userId: string): Promise<void> {
+    await request(
+      `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    );
   },
   async create(input: { name: string; description?: string }) {
     return parseProjectResponse(

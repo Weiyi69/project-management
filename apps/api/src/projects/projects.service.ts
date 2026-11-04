@@ -6,10 +6,14 @@ import {
 } from "@nestjs/common";
 import { ActivityService } from "../activity/activity.service";
 import type {
+  ProjectMembersResponse,
+  ProjectMemberSummary,
+  ProjectMemberRole as ProjectMemberRoleContract,
   ProjectSummary,
   ProjectLifecycle as ProjectLifecycleContract,
 } from "@orbit/contracts";
-import { ProjectLifecycle } from "../generated/prisma/enums";
+import { Prisma } from "../generated/prisma/client";
+import { ProjectLifecycle, ProjectMemberRole } from "../generated/prisma/enums";
 import { randomUUID } from "node:crypto";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -162,6 +166,194 @@ export class ProjectsService {
     return this.toSummary(project);
   }
 
+  async listProjectMembers(userId: string, projectId: string): Promise<ProjectMembersResponse> {
+    const project = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+        workspace: { members: { some: { userId } } },
+      },
+      select: {
+        members: {
+          orderBy: { joinedAt: "asc" },
+          select: {
+            userId: true,
+            projectRole: true,
+            joinedAt: true,
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
+        workspace: {
+          select: {
+            members: {
+              orderBy: { user: { name: "asc" } },
+              select: { user: { select: { id: true, name: true, email: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    if (!project) {
+      throw new NotFoundException("Project not found.");
+    }
+
+    const workspaceMemberIds = new Set(project.workspace.members.map(({ user }) => user.id));
+    return {
+      members: project.members
+        .filter((member) => workspaceMemberIds.has(member.userId))
+        .map((member) => ({
+          userId: member.userId,
+          name: member.user.name,
+          email: member.user.email,
+          projectRole: member.projectRole,
+          joinedAt: member.joinedAt.toISOString(),
+        })),
+      workspaceMembers: project.workspace.members.map(({ user }) => user),
+    };
+  }
+
+  async addProjectMember(
+    actorId: string,
+    projectId: string,
+    targetUserId: string,
+    projectRole: ProjectMemberRoleContract,
+  ): Promise<ProjectMemberSummary> {
+    const project = await this.requireAccessibleProject(actorId, projectId);
+
+    try {
+      return await this.runProjectMembershipTransaction(async (transaction) => {
+        await this.requireProjectManagerInTransaction(
+          transaction,
+          actorId,
+          projectId,
+          project.workspaceId,
+        );
+        const workspaceMembership = await transaction.workspaceMember.findUnique({
+          where: {
+            workspaceId_userId: { workspaceId: project.workspaceId, userId: targetUserId },
+          },
+          select: { id: true },
+        });
+        if (!workspaceMembership) {
+          throw new NotFoundException("Workspace member not found.");
+        }
+
+        const member = await transaction.projectMember.create({
+          data: { projectId, userId: targetUserId, projectRole },
+          include: { user: { select: { id: true, name: true, email: true } } },
+        });
+        await this.activity.record(transaction, {
+          workspaceId: project.workspaceId,
+          projectId,
+          actorId,
+          entityType: "MEMBERSHIP",
+          entityId: targetUserId,
+          action: "PROJECT_MEMBER_ADDED",
+          metadata: { memberName: member.user.name, projectRole: member.projectRole },
+        });
+
+        return this.toProjectMemberSummary(member);
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new ConflictException("This user is already a project member.");
+      }
+      throw error;
+    }
+  }
+
+  async updateProjectMemberRole(
+    actorId: string,
+    projectId: string,
+    targetUserId: string,
+    projectRole: ProjectMemberRoleContract,
+  ): Promise<ProjectMemberSummary> {
+    const project = await this.requireAccessibleProject(actorId, projectId);
+
+    return this.runProjectMembershipTransaction(async (transaction) => {
+      await this.requireProjectManagerInTransaction(
+        transaction,
+        actorId,
+        projectId,
+        project.workspaceId,
+      );
+      const current = await transaction.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      });
+      if (!current) {
+        throw new NotFoundException("Project member not found.");
+      }
+      if (current.projectRole === projectRole) {
+        return this.toProjectMemberSummary(current);
+      }
+
+      if (
+        current.projectRole === ProjectMemberRole.ADMIN &&
+        projectRole === ProjectMemberRole.MEMBER
+      ) {
+        await this.requireAnotherProjectAdmin(transaction, projectId, project.workspaceId);
+      }
+
+      const updated = await transaction.projectMember.update({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+        data: { projectRole },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      });
+      await this.activity.record(transaction, {
+        workspaceId: project.workspaceId,
+        projectId,
+        actorId,
+        entityType: "MEMBERSHIP",
+        entityId: targetUserId,
+        action: "PROJECT_MEMBER_ROLE_CHANGED",
+        metadata: {
+          memberName: updated.user.name,
+          fromRole: current.projectRole,
+          toRole: updated.projectRole,
+        },
+      });
+
+      return this.toProjectMemberSummary(updated);
+    });
+  }
+
+  async removeProjectMember(actorId: string, projectId: string, targetUserId: string): Promise<void> {
+    const project = await this.requireAccessibleProject(actorId, projectId);
+
+    await this.runProjectMembershipTransaction(async (transaction) => {
+      await this.requireProjectManagerInTransaction(
+        transaction,
+        actorId,
+        projectId,
+        project.workspaceId,
+      );
+      const current = await transaction.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+        include: { user: { select: { name: true } } },
+      });
+      if (!current) {
+        throw new NotFoundException("Project member not found.");
+      }
+      if (current.projectRole === ProjectMemberRole.ADMIN) {
+        await this.requireAnotherProjectAdmin(transaction, projectId, project.workspaceId);
+      }
+
+      await transaction.projectMember.delete({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+      });
+      await this.activity.record(transaction, {
+        workspaceId: project.workspaceId,
+        projectId,
+        actorId,
+        entityType: "MEMBERSHIP",
+        entityId: targetUserId,
+        action: "PROJECT_MEMBER_REMOVED",
+        metadata: { memberName: current.user.name },
+      });
+    });
+  }
+
   async updateProject(
     userId: string,
     projectId: string,
@@ -282,6 +474,98 @@ export class ProjectsService {
     if (projectMembership?.projectRole !== "ADMIN") {
       throw new ForbiddenException("Project admin permission is required.");
     }
+  }
+
+  private async requireAccessibleProject(
+    userId: string,
+    projectId: string,
+  ): Promise<{ id: string; workspaceId: string }> {
+    const project = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+        workspace: { members: { some: { userId } } },
+      },
+      select: { id: true, workspaceId: true },
+    });
+    if (!project) {
+      throw new NotFoundException("Project not found.");
+    }
+    return project;
+  }
+
+  private async requireAnotherProjectAdmin(
+    transaction: Prisma.TransactionClient,
+    projectId: string,
+    workspaceId: string,
+  ): Promise<void> {
+    const adminCount = await transaction.projectMember.count({
+      where: {
+        projectId,
+        projectRole: ProjectMemberRole.ADMIN,
+        user: { workspaceMemberships: { some: { workspaceId } } },
+      },
+    });
+    if (adminCount <= 1) {
+      throw new ConflictException("A project must keep at least one project admin.");
+    }
+  }
+
+  private async requireProjectManagerInTransaction(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    projectId: string,
+    workspaceId: string,
+  ): Promise<void> {
+    const membership = await transaction.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: { role: true },
+    });
+    if (!membership) {
+      throw new NotFoundException("Project not found.");
+    }
+    if (membership.role === "OWNER" || membership.role === "ADMIN") {
+      return;
+    }
+
+    const projectMembership = await transaction.projectMember.findUnique({
+      where: { projectId_userId: { projectId, userId } },
+      select: { projectRole: true },
+    });
+    if (projectMembership?.projectRole !== "ADMIN") {
+      throw new ForbiddenException("Project admin permission is required.");
+    }
+  }
+
+  private async runProjectMembershipTransaction<T>(
+    work: (transaction: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.prisma.$transaction(work, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+        throw new ConflictException(
+          "Project membership changed while you were editing it. Refresh and try again.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  private toProjectMemberSummary(member: {
+    userId: string;
+    projectRole: ProjectMemberRole;
+    joinedAt: Date;
+    user: { id: string; name: string; email: string };
+  }): ProjectMemberSummary {
+    return {
+      userId: member.userId,
+      name: member.user.name,
+      email: member.user.email,
+      projectRole: member.projectRole,
+      joinedAt: member.joinedAt.toISOString(),
+    };
   }
 
   private toSummary(project: {

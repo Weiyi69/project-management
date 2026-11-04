@@ -15,12 +15,19 @@ import {
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import type {
+  ProjectMemberResponse,
+  ProjectMembersResponse,
   ProjectResponse,
   ProjectsResponse,
 } from "@orbit/contracts";
 import { AuthGuard } from "../auth/auth.guard";
 import type { AuthenticatedRequest } from "../auth/auth.types";
-import { CreateProjectDto, UpdateProjectDto } from "./project.dto";
+import {
+  AddProjectMemberDto,
+  CreateProjectDto,
+  UpdateProjectDto,
+  UpdateProjectMemberRoleDto,
+} from "./project.dto";
 import { ProjectsService } from "./projects.service";
 
 @ApiTags("projects")
@@ -59,6 +66,61 @@ export class ProjectsController {
     @Param("projectId", new ParseUUIDPipe()) projectId: string,
   ): Promise<ProjectResponse> {
     return { project: await this.projectsService.getProject(request.user!.id, projectId) };
+  }
+
+  @Get("projects/:projectId/members")
+  @ApiOperation({ summary: "List project members and current workspace members" })
+  async listProjectMembers(
+    @Req() request: AuthenticatedRequest,
+    @Param("projectId", new ParseUUIDPipe()) projectId: string,
+  ): Promise<ProjectMembersResponse> {
+    return this.projectsService.listProjectMembers(request.user!.id, projectId);
+  }
+
+  @Post("projects/:projectId/members")
+  @ApiOperation({ summary: "Add a workspace member to a project" })
+  async addProjectMember(
+    @Req() request: AuthenticatedRequest,
+    @Param("projectId", new ParseUUIDPipe()) projectId: string,
+    @Body() input: AddProjectMemberDto,
+  ): Promise<ProjectMemberResponse> {
+    return {
+      member: await this.projectsService.addProjectMember(
+        request.user!.id,
+        projectId,
+        input.userId,
+        input.projectRole,
+      ),
+    };
+  }
+
+  @Patch("projects/:projectId/members/:userId")
+  @ApiOperation({ summary: "Change a project member's role" })
+  async updateProjectMemberRole(
+    @Req() request: AuthenticatedRequest,
+    @Param("projectId", new ParseUUIDPipe()) projectId: string,
+    @Param("userId", new ParseUUIDPipe()) userId: string,
+    @Body() input: UpdateProjectMemberRoleDto,
+  ): Promise<ProjectMemberResponse> {
+    return {
+      member: await this.projectsService.updateProjectMemberRole(
+        request.user!.id,
+        projectId,
+        userId,
+        input.projectRole,
+      ),
+    };
+  }
+
+  @Delete("projects/:projectId/members/:userId")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: "Remove a member from a project" })
+  async removeProjectMember(
+    @Req() request: AuthenticatedRequest,
+    @Param("projectId", new ParseUUIDPipe()) projectId: string,
+    @Param("userId", new ParseUUIDPipe()) userId: string,
+  ): Promise<void> {
+    await this.projectsService.removeProjectMember(request.user!.id, projectId, userId);
   }
 
   @Patch("projects/:projectId")
