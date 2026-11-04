@@ -1,6 +1,6 @@
 # ORBIT
 
-ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–7 are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, project task planning, Socket.IO-based task synchronization, presence and in-app notifications, plus workspace and project analytics with CSV exports.
+ORBIT is a collaborative project-management platform. This repository is being built in verified stages. **Stages 1–7 and the workspace-wide calendar are implemented so far**: the pnpm workspace, Vue/Nest application scaffolds, shared contracts, Tailwind and the ORBIT design system, responsive application shell, PostgreSQL/Prisma foundation, local account registration/sign-in with server-managed sessions, authenticated workspace/project management, project task planning, Socket.IO-based task synchronization, presence and in-app notifications, workspace and project analytics with CSV exports, and a workspace calendar.
 
 Local development targets Windows 10/11 with PostgreSQL installed natively and managed through pgAdmin 4. Docker Desktop is not required.
 
@@ -99,7 +99,7 @@ Workspace settings supports creating and selecting workspaces, renaming a worksp
 
 The Projects section lists projects in the selected workspace. Create a project to save its name and description in PostgreSQL; ORBIT also adds the creator as a project admin and creates To do, In progress, and Done statuses. Open a project to update its details and lifecycle state, manage tasks, or permanently delete it. Project deletion requires typing the project name and also deletes the project's tasks and workflow data.
 
-Project task management provides Kanban, table, and monthly calendar views. Workspace members can create, edit, assign, move, and delete tasks; add/edit/delete comments they authored; manage project labels; and link task dependencies. Assignees must belong to the same workspace. Dependencies are restricted to the same project and cycles are rejected. Calendar entries use task due dates. The task endpoints require a valid session and workspace membership:
+Project task management provides Kanban, table, and monthly calendar views. Workspace members can create, edit, assign, move, and delete tasks; add/edit/delete comments they authored; manage project labels; and link task dependencies. Assignees must belong to the same workspace. Dependencies are restricted to the same project and cycles are rejected. Project and workspace calendar entries use task due dates; tasks without a due date are not displayed. The sidebar Calendar shows dated tasks for the selected workspace in month, week, day, and agenda views, with project, status, priority, and assignee filters. Opening a task uses its existing project task dialog, and creating a task opens that dialog in an available project. The task endpoints require a valid session and workspace membership:
 
 Analytics provides a workspace dashboard and project drill-down based on persisted project, workflow-status, assignment, and due-date data. Project health is explainable: any overdue incomplete task makes a project At risk; otherwise, no tasks, an incomplete task due today through the seventh day after today (UTC calendar days), or unassigned incomplete work makes it Needs attention; projects without those signals are On track. Completion is completed tasks divided by all tasks; an empty project has no completion rate. Team workload counts assigned incomplete tasks and reports unassigned work separately. The dashboard and project detail views export CSV. The project detail view shows up to 100 due tasks; its CSV export includes all overdue and upcoming incomplete tasks. CSV cells are escaped and formula-prefixed values are neutralized for spreadsheet safety. Analytics endpoints require authentication and workspace membership:
 
@@ -111,6 +111,7 @@ Analytics provides a workspace dashboard and project drill-down based on persist
 - `GET /api/v1/workspaces/:workspaceId/members`; `PATCH` and `DELETE /api/v1/workspaces/:workspaceId/members/:userId`
 - `GET`, `POST`, and `DELETE /api/v1/workspaces/:workspaceId/invitations...`
 - `GET /api/v1/projects` and `POST /api/v1/projects`
+- `GET /api/v1/workspaces/:workspaceId/calendar/tasks?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` for due-dated tasks within an inclusive date range
 - `GET`, `PATCH`, and `DELETE /api/v1/projects/:projectId`
 - `GET` and `POST /api/v1/projects/:projectId/tasks`; `GET`, `PATCH`, and `DELETE /api/v1/tasks/:taskId`
 - `GET`, `POST`, `PATCH`, and `DELETE /api/v1/projects/:projectId/labels...`

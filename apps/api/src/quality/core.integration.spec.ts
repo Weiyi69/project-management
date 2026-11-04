@@ -293,7 +293,74 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     }),
   });
   assert.equal(createdTaskResponse.status, 201);
-  const taskData = (await createdTaskResponse.json()) as { task: { id: string } };
+  const taskData = (await createdTaskResponse.json()) as {
+    task: { id: string; dueDate: string | null };
+  };
+  assert.ok(taskData.task.dueDate);
+  const undatedTaskResponse = await request(`/projects/${projectId}/tasks`, {
+    method: "POST",
+    headers: { cookie: ownerCookie },
+    body: JSON.stringify({
+      title: "Task without a calendar date",
+      statusId: todoStatus.id,
+    }),
+  });
+  assert.equal(undatedTaskResponse.status, 201);
+  const undatedTaskData = (await undatedTaskResponse.json()) as { task: { id: string } };
+  const exactCalendarDate = taskData.task.dueDate.slice(0, 10);
+  const calendarResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${exactCalendarDate}&endDate=${exactCalendarDate}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(calendarResponse.status, 200);
+  const calendarData = (await calendarResponse.json()) as {
+    tasks: Array<{ id: string; dueDate: string; project: { id: string; name: string } }>;
+    projects: Array<{ id: string; statuses: Array<{ id: string; name: string }> }>;
+    members: Array<{ id: string }>;
+  };
+  assert.deepEqual(calendarData.tasks.map(({ id }) => id), [taskData.task.id]);
+  assert.equal(calendarData.tasks[0]?.dueDate, exactCalendarDate);
+  assert.equal(calendarData.tasks[0]?.project.id, projectId);
+  assert.equal(calendarData.projects[0]?.id, projectId);
+  assert.ok(calendarData.projects[0]?.statuses.some(({ id }) => id === todoStatus.id));
+  assert.ok(calendarData.members.some(({ id }) => id === ownerRecord.id));
+  const previousCalendarDate = new Date(`${exactCalendarDate}T00:00:00.000Z`);
+  previousCalendarDate.setUTCDate(previousCalendarDate.getUTCDate() - 1);
+  const outsideCalendarResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${previousCalendarDate.toISOString().slice(0, 10)}&endDate=${previousCalendarDate.toISOString().slice(0, 10)}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(outsideCalendarResponse.status, 200);
+  assert.deepEqual((await outsideCalendarResponse.json()).tasks, []);
+  const undatedCalendarResponse = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${exactCalendarDate}&endDate=${exactCalendarDate}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(undatedCalendarResponse.status, 200);
+  assert.equal(
+    ((await undatedCalendarResponse.json()) as { tasks: Array<{ id: string }> }).tasks.some(
+      ({ id }) => id === undatedTaskData.task.id,
+    ),
+    false,
+  );
+  assert.equal(
+    (
+      await request(`/tasks/${undatedTaskData.task.id}`, {
+        method: "DELETE",
+        headers: { cookie: ownerCookie },
+      })
+    ).status,
+    204,
+  );
+  assert.equal(
+    (
+      await request(
+        `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=2026-02-30&endDate=2026-03-01`,
+        { headers: { cookie: ownerCookie } },
+      )
+    ).status,
+    400,
+  );
 
   const firstWorkspaceActivityResponse = await request(
     `/workspaces/${ownerWorkspace.id}/activity`,
@@ -358,6 +425,31 @@ test("authenticated core workflow persists data and enforces workspace boundarie
     where: { id: secondTaskData.task.id },
     data: { dueDate: new Date(focusTodayStart.getTime() - 24 * 60 * 60 * 1000) },
   });
+  const firstWorkspaceCalendar = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${focusTodayKey}&endDate=${focusTodayKey}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(firstWorkspaceCalendar.status, 200);
+  assert.deepEqual(
+    ((await firstWorkspaceCalendar.json()) as { tasks: Array<{ id: string }> }).tasks.map(
+      ({ id }) => id,
+    ),
+    [taskData.task.id],
+  );
+  const secondWorkspaceDate = new Date(focusTodayStart.getTime() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const secondWorkspaceCalendar = await request(
+    `/workspaces/${secondWorkspaceData.workspace.id}/calendar/tasks?startDate=${secondWorkspaceDate}&endDate=${secondWorkspaceDate}`,
+    { headers: { cookie: ownerCookie } },
+  );
+  assert.equal(secondWorkspaceCalendar.status, 200);
+  assert.deepEqual(
+    ((await secondWorkspaceCalendar.json()) as { tasks: Array<{ id: string }> }).tasks.map(
+      ({ id }) => id,
+    ),
+    [secondTaskData.task.id],
+  );
   const taskFocusResponse = await request(
     `/tasks/assigned/focus?today=${focusTodayKey}`,
     { headers: { cookie: ownerCookie } },
@@ -528,6 +620,11 @@ test("authenticated core workflow persists data and enforces workspace boundarie
   assert.equal(outsiderLogin.status, 200);
   const outsiderCookie = cookieFrom(outsiderLogin);
 
+  const outsiderCalendar = await request(
+    `/workspaces/${ownerWorkspace.id}/calendar/tasks?startDate=${focusTodayKey}&endDate=${focusTodayKey}`,
+    { headers: { cookie: outsiderCookie } },
+  );
+  assert.equal(outsiderCalendar.status, 404);
   const outsiderActivity = await request(
     `/workspaces/${ownerWorkspace.id}/activity`,
     { headers: { cookie: outsiderCookie } },

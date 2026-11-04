@@ -22,6 +22,7 @@ async function assertWcagAa(page: import("@playwright/test").Page): Promise<void
 }
 
 test("registers, creates project work, and loads accessible analytics", async ({ page }) => {
+  test.setTimeout(120_000);
   const navigationDurations: Record<string, number> = {};
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const email = `quality-browser-${suffix}@example.test`;
@@ -115,6 +116,25 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await expect(page.getByRole("link", { name: "Invite team members" })).toBeVisible();
   await assertWcagAa(page);
 
+  let releaseEmptyCalendar!: () => void;
+  const heldEmptyCalendarResponse = new Promise<void>((resolve) => {
+    releaseEmptyCalendar = resolve;
+  });
+  const calendarEndpoint = /\/api\/v1\/workspaces\/[^/]+\/calendar\/tasks/;
+  await page.route(calendarEndpoint, async (route) => {
+    await heldEmptyCalendarResponse;
+    await route.continue();
+  });
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await expect(page.getByText("Loading workspace calendar")).toBeVisible();
+  releaseEmptyCalendar();
+  await expect(page.getByRole("heading", { name: "No tasks to show" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create task" })).toBeDisabled();
+  await assertWcagAa(page);
+  await page.unroute(calendarEndpoint);
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(onboardingHeading).toBeVisible();
+
   await page.getByRole("link", { name: "Projects", exact: true }).click();
   let releaseProjects!: () => void;
   const heldProjectsResponse = new Promise<void>((resolve) => {
@@ -202,6 +222,15 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await addTaskButton.click();
   await taskDialog.getByLabel("Title").fill("Verify keyboard task workflow");
   await taskDialog.getByLabel("Assignee").selectOption({ index: 1 });
+  const calendarDueDate = await page.evaluate(() => {
+    const date = new Date();
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+  });
+  await taskDialog.getByLabel("Due date").fill(calendarDueDate);
   const taskStartedAt = performance.now();
   await taskDialog.getByRole("button", { name: "Create task" }).click();
   await expect(page.getByText("Verify keyboard task workflow", { exact: true })).toBeVisible();
@@ -234,6 +263,107 @@ test("registers, creates project work, and loads accessible analytics", async ({
   await assertWcagAa(page);
 
   await page.getByRole("link", { name: "Create task" }).click();
+  await expect(page.getByRole("dialog", { name: "Create task" })).toBeVisible();
+  await page.getByRole("button", { name: "Close task dialog" }).click();
+
+  let releaseCalendar!: () => void;
+  const heldCalendarResponse = new Promise<void>((resolve) => {
+    releaseCalendar = resolve;
+  });
+  await page.route(calendarEndpoint, async (route) => {
+    await heldCalendarResponse;
+    await route.continue();
+  });
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await expect(page.getByText("Loading workspace calendar")).toBeVisible();
+  releaseCalendar();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+  await page.unroute(calendarEndpoint);
+
+  const calendarPeriod = page.locator(".workspace-calendar-period h2");
+  const initialCalendarPeriod = await calendarPeriod.textContent();
+  await page.getByRole("button", { name: "Next period" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(calendarPeriod).not.toHaveText(initialCalendarPeriod ?? "");
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(calendarPeriod).toHaveText(initialCalendarPeriod ?? "");
+  await page.getByRole("button", { name: "Today" }).click();
+  await assertWcagAa(page);
+
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  await expect(page.locator(".workspace-calendar-week-day")).toHaveCount(7);
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Day", exact: true }).click();
+  await expect(page.locator(".workspace-calendar-single-day")).toBeVisible();
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Today" }).click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Agenda", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Agenda view" })).toBeVisible();
+  const agendaPeriod = await calendarPeriod.textContent();
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(calendarPeriod).not.toHaveText(agendaPeriod ?? "");
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(calendarPeriod).toHaveText(agendaPeriod ?? "");
+  await page.getByLabel("Filter by project").selectOption({ label: `Quality browser project ${suffix}` });
+  await page.getByLabel("Filter by status").selectOption({
+    label: `Quality browser project ${suffix} · To do`,
+  });
+  await page.getByLabel("Filter by priority").selectOption("MEDIUM");
+  await page.getByLabel("Filter by assignee").selectOption({ label: "Quality Browser User" });
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+  await page.getByLabel("Filter by priority").selectOption("HIGH");
+  await expect(page.getByRole("heading", { name: "No tasks to show" })).toBeVisible();
+  await page.getByLabel("Filter by priority").selectOption("MEDIUM");
+  await page.getByLabel("Filter by assignee").selectOption("__unassigned__");
+  await expect(page.getByRole("heading", { name: "No tasks to show" })).toBeVisible();
+  await page
+    .getByRole("region", { name: "Calendar filters" })
+    .getByRole("button", { name: "Clear filters" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Month", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const monthColumnCount = await page
+    .locator(".workspace-calendar-month-grid")
+    .evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length);
+  expect(monthColumnCount).toBe(1);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
+  await assertWcagAa(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  await page.getByRole("link", { name: `Open project Quality browser project ${suffix}` }).click();
+  await expect(page).toHaveURL(/\/projects\/[^/?]+$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: /Open task Verify keyboard task workflow/ }).click();
+  await expect(page).toHaveURL(/\/projects\/[^/]+\?task=/);
+  await expect(page.getByRole("dialog", { name: "Edit task" })).toBeVisible();
+  await page.getByRole("button", { name: "Close task dialog" }).click();
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Create task" }).click();
   await expect(page.getByRole("dialog", { name: "Create task" })).toBeVisible();
   await page.getByRole("button", { name: "Close task dialog" }).click();
 

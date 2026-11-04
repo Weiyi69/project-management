@@ -23,6 +23,7 @@ import type {
   ProjectTasksResponse,
   TaskCommentSummary,
   TaskDetail,
+  WorkspaceCalendarResponse,
 } from "@orbit/contracts";
 import { AuthGuard } from "../auth/auth.guard";
 import type { AuthenticatedRequest } from "../auth/auth.types";
@@ -50,6 +51,22 @@ export class TasksController {
     @Param("projectId", new ParseUUIDPipe()) projectId: string,
   ): Promise<ProjectTasksResponse> {
     return this.tasks.listProjectTasks(request.user!.id, projectId);
+  }
+
+  @Get("workspaces/:workspaceId/calendar/tasks")
+  @ApiOperation({ summary: "List dated tasks for a workspace calendar period" })
+  async listWorkspaceCalendarTasks(
+    @Req() request: AuthenticatedRequest,
+    @Param("workspaceId", new ParseUUIDPipe()) workspaceId: string,
+    @Query("startDate") startDate?: string,
+    @Query("endDate") endDate?: string,
+  ): Promise<WorkspaceCalendarResponse> {
+    return this.tasks.listWorkspaceCalendarTasks(
+      request.user!.id,
+      workspaceId,
+      startDate,
+      endDate,
+    );
   }
 
   @Get("tasks/assigned")

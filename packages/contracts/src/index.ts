@@ -136,6 +136,21 @@ export interface ProjectTasksResponse {
   labels: ProjectLabelSummary[];
 }
 
+export interface WorkspaceCalendarTask extends TaskSummary {
+  dueDate: string;
+  project: { id: string; name: string };
+}
+
+export interface WorkspaceCalendarResponse {
+  tasks: WorkspaceCalendarTask[];
+  projects: Array<{
+    id: string;
+    name: string;
+    statuses: Array<{ id: string; name: string; color: string; position: number }>;
+  }>;
+  members: TaskWorkspaceMember[];
+}
+
 export interface MyTaskSummary extends TaskSummary {
   statusIsCompleted: boolean;
   project: {

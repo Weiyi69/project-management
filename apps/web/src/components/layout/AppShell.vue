@@ -259,7 +259,12 @@ function selectWorkspace(workspaceId: string): void {
         </div>
 
         <div class="topbar-actions">
-          <button class="search-trigger" type="button" @click="openCommand">
+          <button
+            class="search-trigger"
+            type="button"
+            aria-label="Search anything K"
+            @click="openCommand"
+          >
             <Search :size="16" />
             <span>Search anything</span>
             <kbd><Command :size="11" /> K</kbd>

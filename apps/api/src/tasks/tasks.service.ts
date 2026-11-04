@@ -17,6 +17,7 @@ import type {
   TaskDetail,
   TaskSummary,
   TaskWorkspaceMember,
+  WorkspaceCalendarResponse,
 } from "@orbit/contracts";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -40,6 +41,15 @@ const taskInclude = {
 } satisfies Prisma.TaskInclude;
 
 type IncludedTask = Prisma.TaskGetPayload<{ include: typeof taskInclude }>;
+
+const workspaceCalendarTaskInclude = {
+  ...taskInclude,
+  project: { select: { id: true, name: true } },
+} satisfies Prisma.TaskInclude;
+
+type IncludedWorkspaceCalendarTask = Prisma.TaskGetPayload<{
+  include: typeof workspaceCalendarTaskInclude;
+}>;
 
 const assignedTaskInclude = {
   ...taskInclude,
@@ -96,6 +106,68 @@ export class TasksService {
           taskCount: label._count.tasks,
         }),
       ),
+    };
+  }
+
+  async listWorkspaceCalendarTasks(
+    userId: string,
+    workspaceId: string,
+    startDate: string | undefined,
+    endDate: string | undefined,
+  ): Promise<WorkspaceCalendarResponse> {
+    await this.workspaceAccess.requireMembership(workspaceId, userId);
+
+    const start = this.parseCalendarDate(startDate, "startDate");
+    const end = this.parseCalendarDate(endDate, "endDate");
+    if (start > end) {
+      throw new BadRequestException("The calendar start date must be on or before its end date.");
+    }
+
+    const endExclusive = new Date(end);
+    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+    const [workspace, records] = await Promise.all([
+      this.prisma.workspace.findFirst({
+        where: { id: workspaceId, members: { some: { userId } } },
+        select: {
+          projects: {
+            where: { workspaceId },
+            select: {
+              id: true,
+              name: true,
+              statuses: {
+                select: { id: true, name: true, color: true, position: true },
+                orderBy: { position: "asc" },
+              },
+            },
+            orderBy: { name: "asc" },
+          },
+          members: {
+            select: { user: { select: { id: true, name: true, email: true } } },
+            orderBy: { user: { name: "asc" } },
+          },
+        },
+      }),
+      this.prisma.task.findMany({
+        where: {
+          dueDate: { gte: start, lt: endExclusive },
+          project: {
+            workspaceId,
+            workspace: { members: { some: { userId } } },
+          },
+        },
+        include: workspaceCalendarTaskInclude,
+        orderBy: [{ dueDate: "asc" }, { title: "asc" }],
+      }),
+    ]);
+
+    if (!workspace) {
+      throw new NotFoundException("Workspace not found.");
+    }
+
+    return {
+      tasks: records.map((task) => this.toWorkspaceCalendarTask(task)),
+      projects: workspace.projects,
+      members: workspace.members.map(({ user }) => user),
     };
   }
 
@@ -727,8 +799,31 @@ export class TasksService {
     return value ? new Date(value) : null;
   }
 
+  private parseCalendarDate(value: string | undefined, fieldName: string): Date {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`The calendar ${fieldName} must use YYYY-MM-DD format.`);
+    }
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+      throw new BadRequestException(`The calendar ${fieldName} is invalid.`);
+    }
+    return date;
+  }
+
   private dateOnly(value: Date | null): string | null {
     return value?.toISOString().slice(0, 10) ?? null;
+  }
+
+  private toWorkspaceCalendarTask(task: IncludedWorkspaceCalendarTask): WorkspaceCalendarResponse["tasks"][number] {
+    const summary = this.toSummary(task);
+    if (!summary.dueDate) {
+      throw new Error("The calendar task query returned a task without a due date.");
+    }
+    return {
+      ...summary,
+      dueDate: summary.dueDate,
+      project: task.project,
+    };
   }
 
   private toSummary(task: IncludedTask): TaskSummary {

@@ -213,6 +213,110 @@
     margin-bottom: 20px;
   }
 
+  .workspace-calendar-heading {
+    align-items: flex-start;
+  }
+
+  .workspace-calendar-heading .button {
+    min-height: 34px;
+    gap: 5px;
+    padding: 0 9px;
+    font-size: 9px;
+  }
+
+  .workspace-calendar-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workspace-calendar-period {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .workspace-calendar-period h2 {
+    font-size: 14px;
+  }
+
+  .workspace-calendar-view-switch {
+    width: 100%;
+  }
+
+  .workspace-calendar-view-switch button {
+    flex: 1;
+    padding: 0 5px;
+    font-size: 9px;
+  }
+
+  .workspace-calendar-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .workspace-calendar-clear {
+    grid-column: 1 / -1;
+    justify-content: center;
+  }
+
+  .workspace-calendar-month-weekdays {
+    display: none;
+  }
+
+  .workspace-calendar-month-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-calendar-month-cell {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    align-content: start;
+    gap: 3px 7px;
+    min-height: 0;
+    padding: 8px;
+  }
+
+  .workspace-calendar-month-cell .workspace-calendar-date {
+    grid-column: 1;
+    grid-row: 1;
+    align-items: flex-start;
+    flex-direction: column;
+    margin: 3px 0 0;
+    font-size: 8px;
+  }
+
+  .workspace-calendar-month-cell .workspace-calendar-date>span:first-child {
+    font-size: 9px;
+  }
+
+  .workspace-calendar-month-cell .workspace-calendar-event {
+    grid-column: 2;
+    margin-top: 2px;
+  }
+
+  .workspace-calendar-week-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .workspace-calendar-week-day {
+    min-height: 80px;
+  }
+
+  .workspace-calendar-agenda-day {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .workspace-calendar-agenda-day>h3 {
+    margin: 2px 0;
+  }
+
+  .workspace-calendar-error {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .projects-heading {
     align-items: flex-start;
   }

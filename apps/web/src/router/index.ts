@@ -9,8 +9,8 @@ import NotificationInboxView from "../views/NotificationInboxView.vue";
 import MyTasksView from "../views/MyTasksView.vue";
 import ProjectDetailView from "../views/ProjectDetailView.vue";
 import ProjectsView from "../views/ProjectsView.vue";
-import SectionPlaceholder from "../views/SectionPlaceholder.vue";
 import WorkspaceOverview from "../views/WorkspaceOverview.vue";
+import WorkspaceCalendarView from "../views/WorkspaceCalendarView.vue";
 import WorkspaceSettingsView from "../views/WorkspaceSettingsView.vue";
 
 export const router = createRouter({
@@ -65,7 +65,7 @@ export const router = createRouter({
         {
           path: "calendar",
           name: "calendar",
-          component: SectionPlaceholder,
+          component: WorkspaceCalendarView,
           meta: {
             title: "Calendar",
             description: "See important dates and upcoming work.",

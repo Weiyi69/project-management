@@ -79,10 +79,15 @@
 
 .analytics-metric-card {
   display: grid;
-  grid-template-columns: 32px 1fr;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 4px 10px;
   padding: 18px;
+}
+
+.analytics-metrics--with-icons .analytics-metric-card {
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
 }
 
 .analytics-metric-icon {
@@ -106,12 +111,17 @@
 
 .analytics-metric-card strong {
   grid-column: 2;
+  justify-self: end;
   color: var(--ink);
   font-size: 25px;
   line-height: 1.15;
 }
 
 .analytics-metric-card small {
+  grid-column: 1 / -1;
+}
+
+.analytics-metrics--with-icons .analytics-metric-card small {
   grid-column: 2;
 }
 
